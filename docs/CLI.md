@@ -99,6 +99,12 @@ Findings include check metadata from the script. Besides `name`, `description`, 
 
 Empty lists are omitted from JSON (`skip_serializing_if`).
 
+## Scan target and socket checks
+
+- **HTTP** checks use `--target` as the request base URL.
+- **TCP/UDP/DNS wire** checks use `host` in the `.ruso` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
+- `ruso validate` / `ruso compile` fail if the script has `match` or `evidence` but no `name` or `report` metadata.
+
 ## Workflow
 
 ```bash

@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use ruso_runtime::ExecutorConfig;
-use ruso_script::parse;
+use ruso_script::{compile_program, parse, CompileError};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -185,8 +185,17 @@ pub fn load_script(path: &PathBuf) -> Result<String, ExitCode> {
 }
 
 pub fn validate_source(source: &str, path_display: &str) -> Result<(), ExitCode> {
-    parse(source).map_err(|err| {
+    let program = parse(source).map_err(|err| {
         tracing::error!(script = %path_display, error = %err, "validation failed");
+        ExitCode::from(1)
+    })?;
+    compile_program(&program).map_err(|err| {
+        let message = match err {
+            CompileError::MissingFindingTitle => {
+                "missing `name` or `report` metadata (required when using match/evidence)"
+            }
+        };
+        tracing::error!(script = %path_display, error = %message, "validation failed");
         ExitCode::from(1)
     })?;
     Ok(())

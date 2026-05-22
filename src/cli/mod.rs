@@ -17,6 +17,7 @@ pub use args::{Cli, Command, OutputFormat, ScanArgs};
 use ruso_runtime::{bytes_to_hex, hex_to_bytes, MAGIC};
 use ruso_script::{
     compile_program, encode_bytecode, load_program, run_bytecode, run_bytes, BytecodeProgram,
+    CompileError,
 };
 
 use self::args::{
@@ -89,7 +90,17 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
             }
         };
 
-        let raw = encode_bytecode(&compile_program(&program));
+        let bytecode = match compile_program(&program) {
+            Ok(bc) => bc,
+            Err(CompileError::MissingFindingTitle) => {
+                ui::error(&format!(
+                    "{}: script has match/evidence but no `name` or `report` metadata",
+                    path.display()
+                ));
+                return process::ExitCode::from(1);
+            }
+        };
+        let raw = encode_bytecode(&bytecode);
         let hex = bytes_to_hex(&raw);
         let out_path = bytecode_path_for_script(path);
 
@@ -255,9 +266,12 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         .map(|script_path| {
             let label = script_path.display().to_string();
             match load_program(script_path) {
-                Ok(program) => PreparedScript::Ready {
-                    label,
-                    bytecode: compile_program(&program),
+                Ok(program) => match compile_program(&program) {
+                    Ok(bytecode) => PreparedScript::Ready { label, bytecode },
+                    Err(CompileError::MissingFindingTitle) => PreparedScript::Failed {
+                        label,
+                        error: "missing `name` or `report` metadata (required when using match/evidence)".into(),
+                    },
                 },
                 Err(err) => PreparedScript::Failed {
                     label,
