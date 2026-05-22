@@ -68,9 +68,9 @@ pub struct ScanArgs {
     #[arg(long)]
     pub no_follow_redirects: bool,
 
-    /// Disable TLS certificate verification
+    /// Verify TLS certificates for HTTPS and TCP `tls` probes (default: skip verify, scanner mode)
     #[arg(long)]
-    pub insecure: bool,
+    pub verify_tls: bool,
 
     /// HTTP proxy URL (e.g. `http://127.0.0.1:8080`)
     #[arg(long, value_name = "URL")]
@@ -114,7 +114,7 @@ pub struct ExecArgs {
     pub no_follow_redirects: bool,
 
     #[arg(long)]
-    pub insecure: bool,
+    pub verify_tls: bool,
 
     #[arg(long, value_name = "URL")]
     pub proxy: Option<String>,
@@ -202,7 +202,7 @@ pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, Exit
         base_url: String::new(),
         default_timeout,
         follow_redirect: !args.no_follow_redirects,
-        verify_ssl: !args.insecure,
+        verify_ssl: args.verify_tls,
         proxy: args.proxy.clone(),
     })
 }
@@ -217,7 +217,7 @@ pub fn executor_base_config(args: &ScanArgs) -> Result<ExecutorConfig, ExitCode>
         base_url: String::new(),
         default_timeout,
         follow_redirect: !args.no_follow_redirects,
-        verify_ssl: !args.insecure,
+        verify_ssl: args.verify_tls,
         proxy: args.proxy.clone(),
     })
 }

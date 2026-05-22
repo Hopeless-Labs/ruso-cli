@@ -1039,7 +1039,7 @@ dependencies = [
 [[package]]
 name = "ruso-runtime"
 version = "0.1.0"
-source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#e05b42de2e39d1866ac39e2710d4b60f2fad54b4"
+source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#8b69723c748bf411210c142c871dcb4c65f156a9"
 dependencies = [
  "regex",
  "reqwest",

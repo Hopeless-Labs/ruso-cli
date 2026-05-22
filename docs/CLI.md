@@ -59,7 +59,7 @@ ruso exec --bytecode ./built/ --target targets.txt -v
 | `--target` | URL or file (one URL per line) |
 | `--timeout` | Default `30s` |
 | `--no-follow-redirects` | HTTP |
-| `--insecure` | Skip TLS verify (HTTP + TCP `tls`) |
+| `--verify-tls` | Verify TLS certs (default: off, scanner mode). HTTP `verify_ssl` in script overrides per probe |
 | `--proxy` | HTTP proxy |
 | `--output` | `human`, `json`, `csv` |
 | `--report` | Required for json/csv |
