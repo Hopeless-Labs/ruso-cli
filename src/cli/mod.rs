@@ -14,9 +14,9 @@ use clap::Parser as _;
 
 pub use args::{Cli, Command, OutputFormat, ScanArgs};
 
-use ruso_runtime::{bytes_to_hex, hex_to_bytes, ExecutionResult, RuntimeError, MAGIC};
+use ruso_runtime::{bytes_to_hex, hex_to_bytes, MAGIC};
 use ruso_script::{
-    compile_program, encode_bytecode, load_program, run as execute_program, run_bytes,
+    compile_program, encode_bytecode, load_program, run_bytecode, run_bytes, BytecodeProgram,
 };
 
 use self::args::{
@@ -250,28 +250,40 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         results: Vec::with_capacity(scan_targets.len() * scripts.len()),
     };
 
+    let prepared_scripts: Vec<PreparedScript> = scripts
+        .iter()
+        .map(|script_path| {
+            let label = script_path.display().to_string();
+            match load_program(script_path) {
+                Ok(program) => PreparedScript::Ready {
+                    label,
+                    bytecode: compile_program(&program),
+                },
+                Err(err) => PreparedScript::Failed {
+                    label,
+                    error: err.to_string(),
+                },
+            }
+        })
+        .collect();
+
     for target in &scan_targets {
         let config = executor_config_for_target(&base_config, target);
-        for script_path in &scripts {
-            let program = match load_program(script_path) {
-                Ok(p) => p,
-                Err(err) => {
-                    let label = script_path.display().to_string();
-                    scan_report.push_result(target.clone(), label, Err(err.to_string()));
-                    continue;
+        for prepared in &prepared_scripts {
+            let (label, exec_result) = match prepared {
+                PreparedScript::Ready { label, bytecode } => {
+                    let cfg = config.clone();
+                    let scan_result =
+                        with_spinner(verbose, || run_bytecode(bytecode, cfg)).await;
+                    let exec_result = match scan_result {
+                        Ok(result) => Ok(result),
+                        Err(err) => Err(err.to_string()),
+                    };
+                    (label.clone(), exec_result)
                 }
+                PreparedScript::Failed { label, error } => (label.clone(), Err(error.clone())),
             };
 
-            let cfg = config.clone();
-            let scan_result =
-                with_spinner(verbose, || execute_script_with_program(&program, cfg)).await;
-
-            let exec_result = match scan_result {
-                Ok(result) => Ok(result),
-                Err(err) => Err(err.to_string()),
-            };
-
-            let label = script_path.display().to_string();
             if args.output == OutputFormat::Human && verbose {
                 let record = match &exec_result {
                     Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
@@ -299,11 +311,15 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     process::ExitCode::from(exit_code_from_report(&scan_report) as u8)
 }
 
-async fn execute_script_with_program(
-    program: &ruso_script::Program,
-    config: ruso_runtime::ExecutorConfig,
-) -> Result<ExecutionResult, RuntimeError> {
-    execute_program(program, config).await
+enum PreparedScript {
+    Ready {
+        label: String,
+        bytecode: BytecodeProgram,
+    },
+    Failed {
+        label: String,
+        error: String,
+    },
 }
 
 /// `.bc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.

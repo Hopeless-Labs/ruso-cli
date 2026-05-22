@@ -82,7 +82,7 @@ ruso scan --script check.ruso --target https://example.com
 ruso scan --script ./checks/ --target targets.txt --output json --report out.json
 ```
 
-Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file).
+Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file). Each script is parsed and compiled once, then bytecode is reused for every target.
 
 ## Workflow
 
