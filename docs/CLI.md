@@ -42,7 +42,7 @@ ruso compile --script check.ruso
 ruso compile --script ./checks/
 ```
 
-- Writes **lowercase hex** of the RUSO v2 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
+- Writes **lowercase hex** of the RUSO v1 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
 - No stdout on success.
 - `exec` decodes hex from `.bc` before running (legacy raw-binary `.bc` with `RUSO` header still works).
 
