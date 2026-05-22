@@ -72,6 +72,12 @@ pub struct FindingRecord {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub references: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cvss: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cvss_score: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mitigation: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
 }
 
@@ -118,6 +124,9 @@ impl ScanResultRecord {
                 cve: f.cve.clone(),
                 cwe: f.cwe.clone(),
                 references: f.references.clone(),
+                cvss: f.cvss.clone(),
+                cvss_score: f.cvss_score.clone(),
+                mitigation: f.mitigation.clone(),
                 evidence: f.evidence.clone(),
             })
             .collect();
@@ -263,6 +272,9 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
             "cve",
             "cwe",
             "references",
+            "cvss",
+            "cvss_score",
+            "mitigation",
             "evidence",
             "error",
         ])
@@ -301,6 +313,15 @@ fn write_csv_row(
     let references = finding
         .map(|f| f.references.join(" | "))
         .unwrap_or_default();
+    let cvss = finding
+        .map(|f| f.cvss.join(" | "))
+        .unwrap_or_default();
+    let cvss_score = finding
+        .map(|f| f.cvss_score.join(" | "))
+        .unwrap_or_default();
+    let mitigation = finding
+        .map(|f| f.mitigation.join(" | "))
+        .unwrap_or_default();
     writer
         .write_record([
             row.target.as_str(),
@@ -316,6 +337,9 @@ fn write_csv_row(
             cve.as_str(),
             cwe.as_str(),
             references.as_str(),
+            cvss.as_str(),
+            cvss_score.as_str(),
+            mitigation.as_str(),
             evidence.as_str(),
             row.error.as_deref().unwrap_or(""),
         ])
@@ -413,6 +437,15 @@ fn print_finding_human(finding: &FindingRecord) {
     }
     for reference in &finding.references {
         println!("  references: {reference}");
+    }
+    for cvss in &finding.cvss {
+        println!("  cvss: {cvss}");
+    }
+    for score in &finding.cvss_score {
+        println!("  cvss_score: {score}");
+    }
+    for mitigation in &finding.mitigation {
+        println!("  mitigation: {mitigation}");
     }
     for evidence in &finding.evidence {
         println!("  evidence: {}", truncate_evidence(evidence, 200));
