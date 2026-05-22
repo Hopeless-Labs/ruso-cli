@@ -1,33 +1,27 @@
 # ruso-cli
 
-Command-line tool for Ruso checks.
+Command-line tool for Ruso checks (`ruso` binary).
 
 ## Documentation
 
-- [CLI reference](../docs/CLI.md)
-- [Examples](../docs/EXAMPLES.md)
+- **[CLI reference](docs/CLI.md)** — commands, flags, output formats
+- **[docs/README.md](docs/README.md)** — ecosystem map and links to runtime/script docs
+
+Example `.ruso` scripts: [ruso-script/examples](https://github.com/Hopeless-Labs/ruso-script/tree/main/examples) and [docs/EXAMPLES.md](https://github.com/Hopeless-Labs/ruso-script/blob/main/docs/EXAMPLES.md).
 
 ## Dependencies
-
-`ruso-cli` pulls libraries from GitHub (`main`):
-
-- [ruso-runtime](https://github.com/Hopeless-Labs/ruso-runtime.git)
-- [ruso-script](https://github.com/Hopeless-Labs/ruso-script.git)
 
 ```toml
 ruso-runtime = { git = "https://github.com/Hopeless-Labs/ruso-runtime.git", branch = "main" }
 ruso-script = { git = "https://github.com/Hopeless-Labs/ruso-script.git", branch = "main" }
 ```
 
-A `[patch]` in `Cargo.toml` may override `ruso-script`'s transitive `ruso-runtime` until both repos use matching git deps on `main`.
-
-## Install / build
+## Build
 
 ```bash
 cargo build --release
+./target/release/ruso --help
 ```
-
-Binary: `ruso`.
 
 ## Quick commands
 
