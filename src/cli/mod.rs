@@ -12,23 +12,21 @@ use std::process;
 
 use clap::Parser as _;
 
-pub use args::{Cli, Command, OutputFormat, ParseArgs, ScanArgs};
+pub use args::{Cli, Command, OutputFormat, ScanArgs};
 
-use ruso_runtime::{
-    bytes_to_hex, bytes_to_hex_dump, encode_bytecode, format_human, load_bytecode_input,
-    ExecutionResult, RuntimeError,
-};
+use ruso_runtime::{ExecutionResult, RuntimeError};
 use ruso_script::{
-    compile_program, load_program, run as execute_program, run_bytes,
+    compile_program, encode_bytecode, load_program, run as execute_program, run_bytes,
 };
 
 use self::args::{
-    executor_base_config, executor_config_for_target, load_script, parse_script, print_parse_result,
+    executor_base_config, executor_config_for_target, executor_config_from_exec, load_script,
+    validate_source,
 };
-use self::discover::discover_scripts;
+use self::discover::{bytecode_path_for_script, discover_bytecode, discover_scripts};
 use self::report::{
-    ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report, print_live_run,
-    validate_report_options, ScanResultRecord,
+    emit_scan_report, exit_code_from_report, print_live_run, validate_report_options,
+    ScanResultRecord, ScanRunReport, ScanSummary,
 };
 
 /// Binary entry: parse argv, init logging, dispatch subcommands.
@@ -38,52 +36,74 @@ pub async fn run() -> process::ExitCode {
     crate::logging::init(cli.log_filter(), verbose);
 
     match cli.command {
-        Command::Parse(args) => cmd_parse(args, verbose),
+        Command::Validate(args) => cmd_validate(args, verbose),
         Command::Compile(args) => cmd_compile(args, verbose),
         Command::Exec(args) => cmd_exec(args, verbose).await,
         Command::Scan(args) => cmd_scan(args, verbose).await,
     }
 }
 
-fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
-    use args::CompileFormat;
-
-    let path = &args.script;
-    let _spinner = (!verbose).then(ui::Spinner::start);
-
-    let program = match load_program(path) {
-        Ok(p) => p,
+fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
+    let scripts = match discover_scripts(&args.script.script) {
+        Ok(scripts) => scripts,
         Err(err) => {
             ui::error(&err.to_string());
             return process::ExitCode::from(1);
         }
     };
 
-    drop(_spinner);
+    let _spinner = (!verbose).then(ui::Spinner::start);
 
-    let bytecode = compile_program(&program);
-    let raw = encode_bytecode(&bytecode);
+    for path in &scripts {
+        let source = match load_script(path) {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let label = path.display().to_string();
+        if let Err(code) = validate_source(&source, &label) {
+            ui::error(&format!("{label}: invalid Ruso script"));
+            return code;
+        }
+    }
 
-    if let Some(out_path) = &args.write {
-        if let Err(err) = std::fs::write(out_path, &raw) {
+    process::ExitCode::SUCCESS
+}
+
+fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
+    let scripts = match discover_scripts(&args.script.script) {
+        Ok(scripts) => scripts,
+        Err(err) => {
+            ui::error(&err.to_string());
+            return process::ExitCode::from(1);
+        }
+    };
+
+    let _spinner = (!verbose).then(ui::Spinner::start);
+
+    for path in &scripts {
+        let program = match load_program(path) {
+            Ok(p) => p,
+            Err(err) => {
+                ui::error(&format!("{}: {err}", path.display()));
+                return process::ExitCode::from(1);
+            }
+        };
+
+        let raw = encode_bytecode(&compile_program(&program));
+        let out_path = bytecode_path_for_script(path);
+
+        if let Err(err) = std::fs::write(&out_path, &raw) {
             ui::error(&format!("failed to write {}: {err}", out_path.display()));
             return process::ExitCode::from(1);
         }
-        eprintln!("bytecode written: {} ({} bytes)", out_path.display(), raw.len());
-    }
-
-    match args.format {
-        CompileFormat::Hex => print!("{}", bytes_to_hex(&raw)),
-        CompileFormat::HexDump => print!("{}", bytes_to_hex_dump(&raw)),
-        CompileFormat::Disasm => print!("{}", format_human(&bytecode)),
     }
 
     process::ExitCode::SUCCESS
 }
 
 async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
-    let bytes = match load_bytecode_input(&args.bytecode) {
-        Ok(b) => b,
+    let bytecode_files = match discover_bytecode(&args.bytecode) {
+        Ok(files) => files,
         Err(err) => {
             ui::error(&err.to_string());
             return process::ExitCode::from(1);
@@ -103,49 +123,58 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         return process::ExitCode::from(1);
     }
 
-    let base_config = match args::executor_config_from_exec(&args) {
+    let base_config = match executor_config_from_exec(&args) {
         Ok(c) => c,
         Err(code) => return code,
     };
 
     let multi_target = targets.len() > 1;
+    let script_labels: Vec<String> = bytecode_files
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+
     let mut scan_report = ScanRunReport {
         targets: targets.clone(),
-        scripts: vec!["<bytecode>".into()],
+        scripts: script_labels.clone(),
         summary: ScanSummary {
             total_runs: 0,
             detected: 0,
             failed: 0,
             clean: 0,
         },
-        results: Vec::with_capacity(targets.len()),
+        results: Vec::with_capacity(targets.len() * bytecode_files.len()),
     };
 
     for target in &targets {
         let config = executor_config_for_target(&base_config, target);
-        let scan_result = with_spinner(verbose, || run_bytes(&bytes, config)).await;
-        let exec_result = match scan_result {
-            Ok(result) => Ok(result),
-            Err(err) => Err(err.to_string()),
-        };
-
-        if args.output == OutputFormat::Human && verbose {
-            let record = match &exec_result {
-                Ok(r) => ScanResultRecord::from_execution(
-                    target.clone(),
-                    "<bytecode>".into(),
-                    r,
-                ),
-                Err(msg) => ScanResultRecord::from_error(
-                    target.clone(),
-                    "<bytecode>".into(),
-                    msg.clone(),
-                ),
+        for bc_path in &bytecode_files {
+            let bytes = match std::fs::read(bc_path) {
+                Ok(b) => b,
+                Err(err) => {
+                    ui::error(&format!("failed to read {}: {err}", bc_path.display()));
+                    return process::ExitCode::from(1);
+                }
             };
-            print_live_run(&record, multi_target);
-        }
 
-        scan_report.push_result(target.clone(), "<bytecode>".into(), exec_result);
+            let label = bc_path.display().to_string();
+            let cfg = config.clone();
+            let scan_result = with_spinner(verbose, || run_bytes(&bytes, cfg)).await;
+            let exec_result = match scan_result {
+                Ok(result) => Ok(result),
+                Err(err) => Err(err.to_string()),
+            };
+
+            if args.output == OutputFormat::Human && verbose {
+                let record = match &exec_result {
+                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
+                    Err(msg) => ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone()),
+                };
+                print_live_run(&record, multi_target);
+            }
+
+            scan_report.push_result(target.clone(), label, exec_result);
+        }
     }
 
     scan_report.finish();
@@ -176,29 +205,8 @@ where
     }
 }
 
-fn cmd_parse(args: ParseArgs, verbose: bool) -> process::ExitCode {
-    let path = &args.script;
-    let _spinner = (!verbose).then(ui::Spinner::start);
-
-    let source = match load_script(path) {
-        Ok(s) => s,
-        Err(code) => return code,
-    };
-    let program = match parse_script(&source) {
-        Ok(p) => p,
-        Err(code) => return code,
-    };
-
-    drop(_spinner);
-
-    if let Err(code) = print_parse_result(&program, args.format) {
-        return code;
-    }
-    process::ExitCode::SUCCESS
-}
-
 async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
-    let scripts = match discover_scripts(&args.script) {
+    let scripts = match discover_scripts(&args.script.script) {
         Ok(scripts) => scripts,
         Err(err) => {
             ui::error(&err.to_string());

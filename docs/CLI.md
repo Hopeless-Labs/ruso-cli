@@ -1,10 +1,15 @@
 # CLI (`ruso`)
 
-Binary name: **`ruso`** (package `ruso-cli`).
+Binary name: **`ruso`**. Four commands only:
+
+| Command | Purpose |
+|---------|---------|
+| `scan` | Parse, compile, and run `.ruso` against targets |
+| `validate` | Check `.ruso` syntax (no network) |
+| `compile` | Write binary bytecode to `<script>.bc` (silent on success) |
+| `exec` | Run `.bc` bytecode against targets |
 
 ## Build
-
-From a clone of the **ruso-cli** repository:
 
 ```bash
 cargo build --release
@@ -15,111 +20,70 @@ cargo build --release
 
 | Flag | Effect |
 |------|--------|
-| `-q` / `--quiet` | Less logging (repeat for quieter) |
-| `-v` / `--verbose` | More logging (`-vv` trace) |
-| `RUST_LOG` | Overrides default filter (e.g. `RUST_LOG=ruso_runtime=debug`) |
+| `-q` / `--quiet` | Less logging |
+| `-v` / `--verbose` | More logging; live `detected` / `no` lines during scan/exec |
+| `RUST_LOG` | Overrides default filter |
 
-## Commands
-
-### `parse`
-
-Validate syntax; no network.
+## `validate`
 
 ```bash
-ruso parse --script path/to/check.ruso
-ruso parse --script ./checks/ --format json
+ruso validate --script check.ruso
+ruso validate --script ./checks/
+```
+
+- File must be `.ruso`; directory collects `*.ruso` recursively.
+- Exit `0` if all valid; errors on stderr only.
+- No stdout on success.
+
+## `compile`
+
+```bash
+ruso compile --script check.ruso
+ruso compile --script ./checks/
+```
+
+- Writes **raw RUSO v2 bytes** (not hex) to `check.bc` beside `check.ruso`.
+- No stdout on success.
+- Format on disk: magic `RUSO` + pools + instructions (see ruso-runtime `docs/BYTECODE.md`).
+
+## `exec`
+
+```bash
+ruso exec --bytecode check.bc --target https://example.com
+ruso exec --bytecode ./built/ --target targets.txt -v
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--script` | `.ruso` file or directory (recursive) |
-| `--format` | `human` (default) or `json` |
-
-Exit success when all files parse.
-
-### `compile`
-
-Emit bytecode without executing.
-
-```bash
-ruso compile --script check.ruso --write check.bc
-ruso compile --script check.ruso --format hex        # stdout (default)
-ruso compile --script check.ruso --format disasm     # human-readable
-```
-
-`--write` stores raw RUSO v2 bytes. Use with `exec --bytecode @check.bc`.
-
-### `exec`
-
-Run precompiled bytecode.
-
-```bash
-ruso exec --bytecode @check.bc --target https://example.com
-ruso exec --bytecode deadbeef... --target https://example.com
-```
-
-`@file` reads raw bytes from disk.
-
-### `scan`
-
-Parse, compile, and execute in one step (primary workflow).
-
-```bash
-ruso scan \
-  --script examples/http_health.ruso \
-  --target https://example.com \
-  --timeout 30s \
-  --output human
-
-ruso scan \
-  --script ./checks/ \
-  --target targets.txt \
-  --output json \
-  --report findings.json \
-  --insecure
-```
-
-| Flag | Description |
-|------|-------------|
-| `--script` | `.ruso` file or directory |
+| `--bytecode` | `.bc` file or directory of `.bc` files |
 | `--target` | URL or file (one URL per line) |
-| `--timeout` | Default duration (`30s`) |
-| `--no-follow-redirects` | HTTP only |
-| `--insecure` | Disable TLS verify (HTTP + TCP `tls`) |
-| `--proxy` | HTTP proxy URL |
+| `--timeout` | Default `30s` |
+| `--no-follow-redirects` | HTTP |
+| `--insecure` | Skip TLS verify (HTTP + TCP `tls`) |
+| `--proxy` | HTTP proxy |
 | `--output` | `human`, `json`, `csv` |
-| `--report` | Output path (required for json/csv) |
+| `--report` | Required for json/csv |
 
-### HTTP vs socket targets
-
-- **HTTP checks** — `--target https://host` sets `ExecutorConfig.base_url`. Probe `path` is relative to that base.  
-- **TCP/UDP/DNS socket checks** — host/port usually come from the script (`tcp { host "…" port … }`). `--target` may still be required by CLI but is not substituted into socket `host` automatically yet.
-
-## Output formats
-
-**Human** — findings and status to stdout.
-
-**JSON / CSV** — structured report; requires `--report path`.
-
-## Batch scanning
-
-- **Scripts** — directory recursively collects `*.ruso`.  
-- **Targets** — file with one URL per line runs cartesian product with each script (see CLI implementation in `src/cli/mod.rs`).
-
-## Development workflow
+## `scan`
 
 ```bash
-# 1. Syntax
-ruso parse --script mycheck.ruso -v
+ruso scan --script check.ruso --target https://example.com
+ruso scan --script ./checks/ --target targets.txt --output json --report out.json
+```
 
-# 2. Run against lab target
-ruso scan --script mycheck.ruso --target https://lab.local -vv
+Same target/timeout/TLS/report flags as `exec`, but runs `.ruso` source directly (no `.bc` file).
 
-# 3. Freeze bytecode for CI
-ruso compile --script mycheck.ruso --write mycheck.bc
-ruso exec --bytecode @mycheck.bc --target https://lab.local
+## Workflow
+
+```bash
+ruso validate --script mycheck.ruso
+ruso compile --script mycheck.ruso          # → mycheck.bc
+ruso exec --bytecode mycheck.bc --target https://lab.local -v
+
+# Or one step from source:
+ruso scan --script mycheck.ruso --target https://lab.local -v
 ```
 
 ## Exit codes
 
-Non-zero on parse/compile failure, runtime `fail`, or I/O errors. Successful run with no finding is still exit 0 unless the CLI maps detection differently—check `cmd_scan` for project-specific policy.
+Non-zero on validation/compile failure, missing paths, runtime errors, or report I/O. A successful run with no finding is exit `0` (`no` in verbose human output).

@@ -2,34 +2,39 @@
 
 Command-line tool for Ruso checks (`ruso` binary).
 
-## Documentation
+## Commands
 
-- **[CLI reference](docs/CLI.md)** — commands, flags, output formats
-- **[docs/README.md](docs/README.md)** — ecosystem map and links to runtime/script docs
+| Command | Description |
+|---------|-------------|
+| `scan` | Run `.ruso` scripts against targets |
+| `validate` | Validate `.ruso` syntax |
+| `compile` | Compile to `<name>.bc` (binary bytecode, no terminal output) |
+| `exec` | Run `.bc` bytecode against targets |
 
-Example `.ruso` scripts: [ruso-script/examples](https://github.com/Hopeless-Labs/ruso-script/tree/main/examples) and [docs/EXAMPLES.md](https://github.com/Hopeless-Labs/ruso-script/blob/main/docs/EXAMPLES.md).
+See **[docs/CLI.md](docs/CLI.md)** for flags and examples.
+
+## Build
+
+```bash
+cargo build --release
+```
+
+## Quick start
+
+```bash
+ruso validate --script check.ruso
+ruso compile --script check.ruso
+ruso exec --bytecode check.bc --target https://httpbin.org
+ruso scan --script check.ruso --target https://httpbin.org -v
+```
+
+Example scripts: [ruso-script/examples](https://github.com/Hopeless-Labs/ruso-script/tree/main/examples).
 
 ## Dependencies
 
 ```toml
 ruso-runtime = { git = "https://github.com/Hopeless-Labs/ruso-runtime.git", branch = "main" }
 ruso-script = { git = "https://github.com/Hopeless-Labs/ruso-script.git", branch = "main" }
-```
-
-## Build
-
-```bash
-cargo build --release
-./target/release/ruso --help
-```
-
-## Quick commands
-
-```bash
-ruso parse --script check.ruso
-ruso scan --script check.ruso --target https://example.com
-ruso compile --script check.ruso --write check.bc
-ruso exec --bytecode @check.bc --target https://example.com
 ```
 
 ## License
