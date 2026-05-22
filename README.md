@@ -1,5 +1,7 @@
 # ruso-cli
 
+> **Development status:** This project is under active development. APIs, bytecode format, and CLI behavior may change without notice. Not recommended for production use yet.
+
 Command-line tool for Ruso checks (`ruso` binary).
 
 ## Commands
