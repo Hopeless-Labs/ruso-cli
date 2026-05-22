@@ -7,14 +7,14 @@ mod targets;
 mod ui;
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::Parser as _;
 
 pub use args::{Cli, Command, OutputFormat, ScanArgs};
 
-use ruso_runtime::{ExecutionResult, RuntimeError};
+use ruso_runtime::{bytes_to_hex, hex_to_bytes, ExecutionResult, RuntimeError, MAGIC};
 use ruso_script::{
     compile_program, encode_bytecode, load_program, run as execute_program, run_bytes,
 };
@@ -90,9 +90,10 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
         };
 
         let raw = encode_bytecode(&compile_program(&program));
+        let hex = bytes_to_hex(&raw);
         let out_path = bytecode_path_for_script(path);
 
-        if let Err(err) = std::fs::write(&out_path, &raw) {
+        if let Err(err) = std::fs::write(&out_path, hex.as_bytes()) {
             ui::error(&format!("failed to write {}: {err}", out_path.display()));
             return process::ExitCode::from(1);
         }
@@ -149,10 +150,10 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
     for target in &targets {
         let config = executor_config_for_target(&base_config, target);
         for bc_path in &bytecode_files {
-            let bytes = match std::fs::read(bc_path) {
+            let bytes = match read_bytecode_file(bc_path) {
                 Ok(b) => b,
                 Err(err) => {
-                    ui::error(&format!("failed to read {}: {err}", bc_path.display()));
+                    ui::error(&format!("{}: {err}", bc_path.display()));
                     return process::ExitCode::from(1);
                 }
             };
@@ -304,4 +305,15 @@ async fn execute_script(
 ) -> Result<ExecutionResult, RuntimeError> {
     let program = load_program(script_path).map_err(|err| RuntimeError::Other(err.to_string()))?;
     execute_program(&program, config).await
+}
+
+/// `.bc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.
+fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
+    let data = std::fs::read(path).map_err(|err| format!("failed to read: {err}"))?;
+    if data.starts_with(MAGIC) {
+        return Ok(data);
+    }
+    let text = std::str::from_utf8(&data)
+        .map_err(|err| format!("invalid .bc file (expected hex text): {err}"))?;
+    hex_to_bytes(text).map_err(|err| err.to_string())
 }

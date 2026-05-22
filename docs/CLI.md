@@ -6,7 +6,7 @@ Binary name: **`ruso`**. Four commands only:
 |---------|---------|
 | `scan` | Parse, compile, and run `.ruso` against targets |
 | `validate` | Check `.ruso` syntax (no network) |
-| `compile` | Write binary bytecode to `<script>.bc` (silent on success) |
+| `compile` | Write hex-encoded bytecode to `<script>.bc` (silent on success) |
 | `exec` | Run `.bc` bytecode against targets |
 
 ## Build
@@ -42,9 +42,9 @@ ruso compile --script check.ruso
 ruso compile --script ./checks/
 ```
 
-- Writes **raw RUSO v2 bytes** (not hex) to `check.bc` beside `check.ruso`.
+- Writes **lowercase hex** of the RUSO v2 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
 - No stdout on success.
-- Format on disk: magic `RUSO` + pools + instructions (see ruso-runtime `docs/BYTECODE.md`).
+- `exec` decodes hex from `.bc` before running (legacy raw-binary `.bc` with `RUSO` header still works).
 
 ## `exec`
 
@@ -55,7 +55,7 @@ ruso exec --bytecode ./built/ --target targets.txt -v
 
 | Flag | Description |
 |------|-------------|
-| `--bytecode` | `.bc` file or directory of `.bc` files |
+| `--bytecode` | `.bc` file or directory of `.bc` files (hex from `compile`) |
 | `--target` | URL or file (one URL per line) |
 | `--timeout` | Default `30s` |
 | `--no-follow-redirects` | HTTP |

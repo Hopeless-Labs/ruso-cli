@@ -8,7 +8,7 @@ Command-line tool for Ruso checks (`ruso` binary).
 |---------|-------------|
 | `scan` | Run `.ruso` scripts against targets |
 | `validate` | Validate `.ruso` syntax |
-| `compile` | Compile to `<name>.bc` (binary bytecode, no terminal output) |
+| `compile` | Compile to `<name>.bc` (hex text, no terminal output) |
 | `exec` | Run `.bc` bytecode against targets |
 
 See **[docs/CLI.md](docs/CLI.md)** for flags and examples.

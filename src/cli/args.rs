@@ -37,10 +37,10 @@ pub enum Command {
     /// Validate `.ruso` syntax (no network I/O)
     Validate(ValidateArgs),
 
-    /// Compile `.ruso` to binary bytecode (writes `<name>.bc` next to each script)
+    /// Compile `.ruso` to hex bytecode (writes `<name>.bc` next to each script)
     Compile(CompileArgs),
 
-    /// Run precompiled `.bc` bytecode against targets
+    /// Run compiled `.bc` against targets
     Exec(ExecArgs),
 }
 
