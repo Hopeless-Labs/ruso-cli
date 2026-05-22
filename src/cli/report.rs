@@ -66,6 +66,12 @@ pub struct FindingRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cve: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cwe: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub references: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
 }
 
@@ -109,6 +115,9 @@ impl ScanResultRecord {
                 description: f.description.clone(),
                 impact: f.impact.clone(),
                 author: f.author.clone(),
+                cve: f.cve.clone(),
+                cwe: f.cwe.clone(),
+                references: f.references.clone(),
                 evidence: f.evidence.clone(),
             })
             .collect();
@@ -251,6 +260,9 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
             "description",
             "impact",
             "author",
+            "cve",
+            "cwe",
+            "references",
             "evidence",
             "error",
         ])
@@ -280,6 +292,15 @@ fn write_csv_row(
     let evidence = finding
         .map(|f| f.evidence.join(" | "))
         .unwrap_or_default();
+    let cve = finding
+        .map(|f| f.cve.join(" | "))
+        .unwrap_or_default();
+    let cwe = finding
+        .map(|f| f.cwe.join(" | "))
+        .unwrap_or_default();
+    let references = finding
+        .map(|f| f.references.join(" | "))
+        .unwrap_or_default();
     writer
         .write_record([
             row.target.as_str(),
@@ -292,6 +313,9 @@ fn write_csv_row(
             finding.and_then(|f| f.description.as_deref()).unwrap_or(""),
             finding.and_then(|f| f.impact.as_deref()).unwrap_or(""),
             finding.and_then(|f| f.author.as_deref()).unwrap_or(""),
+            cve.as_str(),
+            cwe.as_str(),
+            references.as_str(),
             evidence.as_str(),
             row.error.as_deref().unwrap_or(""),
         ])
@@ -380,6 +404,15 @@ fn print_finding_human(finding: &FindingRecord) {
     }
     if let Some(author) = &finding.author {
         println!("  author: {author}");
+    }
+    for cve in &finding.cve {
+        println!("  cve: {cve}");
+    }
+    for cwe in &finding.cwe {
+        println!("  cwe: {cwe}");
+    }
+    for reference in &finding.references {
+        println!("  references: {reference}");
     }
     for evidence in &finding.evidence {
         println!("  evidence: {}", truncate_evidence(evidence, 200));
