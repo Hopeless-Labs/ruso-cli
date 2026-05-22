@@ -64,6 +64,17 @@ ruso exec --bytecode ./built/ --target targets.txt -v
 | `--output` | `human`, `json`, `csv` |
 | `--report` | Required for json/csv |
 
+### Port checks (`ruso-runtime`)
+
+Before each script run, **ruso-runtime** TCP-probes required ports and caches `host:port` → open/closed for **30 seconds** (one `ruso` process, shared cache).
+
+Endpoints:
+
+- Socket probes: `host` + `port` from `tcp` / `udp` / wire-mode `dns`
+- HTTP checks: `host` + port from `--target` (e.g. `https://example.com` → `example.com:443`)
+
+**`skipped`** means *this script run* did not execute because a required port was closed (often from cache after an earlier script hit the same port). The scan **continues** with other scripts that use different ports. Example: three scripts on port 443 — first run finds 443 closed and caches it; the other two are `skipped` for that target; a script on port 22 still runs.
+
 ## `scan`
 
 ```bash
@@ -71,7 +82,7 @@ ruso scan --script check.ruso --target https://example.com
 ruso scan --script ./checks/ --target targets.txt --output json --report out.json
 ```
 
-Same target/timeout/TLS/report flags as `exec`, but runs `.ruso` source directly (no `.bc` file).
+Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file).
 
 ## Workflow
 

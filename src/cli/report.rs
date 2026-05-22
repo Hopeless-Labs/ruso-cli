@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use ruso_runtime::ExecutionResult;
+use ruso_runtime::{ExecutionResult, PortCheck};
 
 use crate::cli::args::OutputFormat;
 
@@ -22,6 +22,7 @@ pub struct ScanSummary {
     pub total_runs: usize,
     pub detected: usize,
     pub failed: usize,
+    pub skipped: usize,
     pub clean: usize,
 }
 
@@ -37,6 +38,21 @@ pub struct ScanResultRecord {
     pub error: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<FindingRecord>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub skipped: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub port_checks: Vec<PortCheckRecord>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PortCheckRecord {
+    pub host: String,
+    pub port: u16,
+    pub open: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,9 +80,11 @@ impl ScanRunReport {
             Ok(exec) => ScanResultRecord::from_execution(target, script, &exec),
             Err(message) => ScanResultRecord::from_error(target, script, message),
         };
-        if record.detected {
+        if record.skipped {
+            self.summary.skipped += 1;
+        } else if record.detected {
             self.summary.detected += 1;
-        } else if record.error.is_some() || !record.success {
+        } else if !record.success && record.error.is_some() {
             self.summary.failed += 1;
         } else {
             self.summary.clean += 1;
@@ -101,8 +119,10 @@ impl ScanResultRecord {
             success: result.success,
             detected: result.detected,
             check: result.metadata.name.clone(),
-            error: None,
+            error: result.skip_reason.clone(),
             findings,
+            skipped: result.skipped,
+            port_checks: port_checks_to_records(&result.port_checks),
         }
     }
 
@@ -115,8 +135,21 @@ impl ScanResultRecord {
             check: None,
             error: Some(message),
             findings: Vec::new(),
+            skipped: false,
+            port_checks: Vec::new(),
         }
     }
+}
+
+fn port_checks_to_records(checks: &[PortCheck]) -> Vec<PortCheckRecord> {
+    checks
+        .iter()
+        .map(|c| PortCheckRecord {
+            host: c.host.clone(),
+            port: c.port,
+            open: c.open,
+        })
+        .collect()
 }
 
 /// Validate `--report` / `--output` combination before scanning.
@@ -271,6 +304,11 @@ pub fn print_live_run(record: &ScanResultRecord, multi_target: bool) {
         print!("{} ", record.target);
     }
     print!("{}: ", script_label(&record.script));
+    if record.skipped {
+        let msg = record.error.as_deref().unwrap_or("port closed");
+        println!("skipped ({msg})");
+        return;
+    }
     if let Some(err) = &record.error {
         println!("error ({err})");
         return;
@@ -313,6 +351,9 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
         );
         println!("  detected: {}", report.summary.detected);
         println!("  failed:   {}", report.summary.failed);
+        if report.summary.skipped > 0 {
+            println!("  skipped:  {}", report.summary.skipped);
+        }
         if verbose {
             println!("  clean:    {}", report.summary.clean);
         }

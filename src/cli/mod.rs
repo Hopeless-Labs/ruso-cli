@@ -7,7 +7,7 @@ mod targets;
 mod ui;
 
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process;
 
 use clap::Parser as _;
@@ -142,6 +142,7 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
             total_runs: 0,
             detected: 0,
             failed: 0,
+            skipped: 0,
             clean: 0,
         },
         results: Vec::with_capacity(targets.len() * bytecode_files.len()),
@@ -243,6 +244,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
             total_runs: 0,
             detected: 0,
             failed: 0,
+            skipped: 0,
             clean: 0,
         },
         results: Vec::with_capacity(scan_targets.len() * scripts.len()),
@@ -251,36 +253,34 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     for target in &scan_targets {
         let config = executor_config_for_target(&base_config, target);
         for script_path in &scripts {
-            let path = script_path.clone();
+            let program = match load_program(script_path) {
+                Ok(p) => p,
+                Err(err) => {
+                    let label = script_path.display().to_string();
+                    scan_report.push_result(target.clone(), label, Err(err.to_string()));
+                    continue;
+                }
+            };
+
             let cfg = config.clone();
-            let scan_result = with_spinner(verbose, || execute_script(&path, cfg)).await;
+            let scan_result =
+                with_spinner(verbose, || execute_script_with_program(&program, cfg)).await;
 
             let exec_result = match scan_result {
                 Ok(result) => Ok(result),
                 Err(err) => Err(err.to_string()),
             };
 
+            let label = script_path.display().to_string();
             if args.output == OutputFormat::Human && verbose {
                 let record = match &exec_result {
-                    Ok(r) => ScanResultRecord::from_execution(
-                        target.clone(),
-                        script_path.display().to_string(),
-                        r,
-                    ),
-                    Err(msg) => ScanResultRecord::from_error(
-                        target.clone(),
-                        script_path.display().to_string(),
-                        msg.clone(),
-                    ),
+                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
+                    Err(msg) => ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone()),
                 };
                 print_live_run(&record, multi_target);
             }
 
-            scan_report.push_result(
-                target.clone(),
-                script_path.display().to_string(),
-                exec_result,
-            );
+            scan_report.push_result(target.clone(), label, exec_result);
         }
     }
 
@@ -299,12 +299,11 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     process::ExitCode::from(exit_code_from_report(&scan_report) as u8)
 }
 
-async fn execute_script(
-    script_path: &PathBuf,
+async fn execute_script_with_program(
+    program: &ruso_script::Program,
     config: ruso_runtime::ExecutorConfig,
 ) -> Result<ExecutionResult, RuntimeError> {
-    let program = load_program(script_path).map_err(|err| RuntimeError::Other(err.to_string()))?;
-    execute_program(&program, config).await
+    execute_program(program, config).await
 }
 
 /// `.bc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.
