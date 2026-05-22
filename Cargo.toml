@@ -3,7 +3,7 @@ name = "ruso-cli"
 version = "0.1.0"
 edition = "2024"
 description = "CLI for the Ruso vulnerability scan DSL"
-license = "MIT OR Apache-2.0"
+license = "Apache-2.0"
 
 [[bin]]
 name = "ruso"

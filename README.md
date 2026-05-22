@@ -40,4 +40,4 @@ ruso exec --bytecode @check.bc --target https://example.com
 
 ## License
 
-MIT OR Apache-2.0
+Apache License 2.0. See [LICENSE](LICENSE).
