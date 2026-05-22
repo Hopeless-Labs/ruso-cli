@@ -84,6 +84,18 @@ ruso scan --script ./checks/ --target targets.txt --output json --report out.jso
 
 Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file). Each script is parsed and compiled once, then bytecode is reused for every target.
 
+## Report output (`--output json` / `csv` / `human`)
+
+Findings include check metadata from the script. Besides `name`, `description`, `impact`, `severity`, `author`, and `evidence`, positive rows may include:
+
+| Field | Source in `.ruso` |
+|-------|-------------------|
+| `cve` | Repeatable `cve "…"` lines (JSON array; CSV/human joined with ` \| `) |
+| `cwe` | Repeatable `cwe "…"` lines |
+| `references` | Repeatable `references "…"` lines (URLs, advisories, etc.) |
+
+Empty lists are omitted from JSON (`skip_serializing_if`).
+
 ## Workflow
 
 ```bash
