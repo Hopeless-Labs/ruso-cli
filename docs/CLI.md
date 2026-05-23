@@ -94,7 +94,7 @@ Findings include check metadata from the script. Besides `name`, `description`, 
 | `cwe` | Repeatable `cwe "…"` lines |
 | `references` | Repeatable `references "…"` lines (URLs, advisories, etc.) |
 | `cvss` | Repeatable `cvss "…"` lines (CVSS vector, e.g. `CVSS:3.1/…`) |
-| `cvss_score` | Repeatable `cvss_score "…"` lines (numeric score, e.g. `9.8`) |
+| `cvss_score` | Repeatable `cvss_score 9.8` lines (numeric literal, stored as string in reports) |
 | `mitigation` | Repeatable `mitigation "…"` lines (remediation guidance) |
 
 Empty lists are omitted from JSON (`skip_serializing_if`).
