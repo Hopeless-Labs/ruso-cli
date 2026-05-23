@@ -86,7 +86,7 @@ Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` sour
 
 ## Report output (`--output json` / `csv` / `human`)
 
-Findings include check metadata from the script. Besides `name`, `description`, `impact`, `severity`, `author`, and `evidence`, positive rows may include:
+Findings include check metadata from the script `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`, `author`, and `evidence`, positive rows may include:
 
 | Field | Source in `.ruso` |
 |-------|-------------------|
