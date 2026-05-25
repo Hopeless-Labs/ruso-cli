@@ -90,9 +90,9 @@ Findings include check metadata from the script `metadata { … }` block. Beside
 
 | Field | Source in `.ruso` |
 |-------|-------------------|
-| `cve` | Repeatable `cve "…"` lines (JSON array; CSV/human joined with ` \| `) |
-| `cwe` | Repeatable `cwe "…"` lines |
-| `references` | Repeatable `references "…"` lines (URLs, advisories, etc.) |
+| `cve` | `cve ["…", "…"]` list (JSON array; CSV/human joined with ` \| `) |
+| `cwe` | `cwe ["…"]` list |
+| `references` | `references ["…", "…"]` list (URLs, advisories, etc.) |
 | `cvss` | Repeatable `cvss "…"` lines (CVSS vector, e.g. `CVSS:3.1/…`) |
 | `cvss_score` | Repeatable `cvss_score 9.8` lines (numeric literal, stored as string in reports) |
 | `mitigation` | Repeatable `mitigation "…"` lines (remediation guidance) |
