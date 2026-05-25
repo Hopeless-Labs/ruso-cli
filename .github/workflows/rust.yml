@@ -15,8 +15,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout ruso-cli
+      uses: actions/checkout@v4
+      with:
+        path: ruso-cli
+    - name: Checkout ruso-runtime (sibling for [patch] override)
+      uses: actions/checkout@v4
+      with:
+        repository: Hopeless-Labs/ruso-runtime
+        ref: main
+        path: ruso-runtime
+    - name: Checkout ruso-script (sibling for [patch] override)
+      uses: actions/checkout@v4
+      with:
+        repository: Hopeless-Labs/ruso-script
+        ref: main
+        path: ruso-script
     - name: Build
+      working-directory: ruso-cli
       run: cargo build --verbose
     - name: Run tests
+      working-directory: ruso-cli
       run: cargo test --verbose
