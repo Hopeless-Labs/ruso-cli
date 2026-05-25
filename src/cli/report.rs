@@ -236,25 +236,23 @@ pub fn emit_scan_report(
 }
 
 fn write_json_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 format!("create report directory {}: {err}", parent.display())
             })?;
         }
-    }
     let json = serde_json::to_string_pretty(report).map_err(|err| format!("encode json: {err}"))?;
     std::fs::write(path, json).map_err(|err| format!("write report {}: {err}", path.display()))
 }
 
 fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|err| {
                 format!("create report directory {}: {err}", parent.display())
             })?;
         }
-    }
     let file = File::create(path).map_err(|err| format!("create report {}: {err}", path.display()))?;
     let mut writer = csv::Writer::from_writer(file);
     writer
@@ -382,7 +380,7 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
             if multi {
                 print!("{} ", record.target);
             }
-            print!("{}: detected\n", script_label(&record.script));
+            println!("{}: detected", script_label(&record.script));
             for finding in &record.findings {
                 print_finding_human(finding);
             }

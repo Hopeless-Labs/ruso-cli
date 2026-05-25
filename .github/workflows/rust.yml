@@ -8,32 +8,74 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   build:
-
+    name: Build & test
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout ruso-cli
-      uses: actions/checkout@v4
-      with:
-        path: ruso-cli
-    - name: Checkout ruso-runtime (sibling for [patch] override)
-      uses: actions/checkout@v4
-      with:
-        repository: Hopeless-Labs/ruso-runtime
-        ref: main
-        path: ruso-runtime
-    - name: Checkout ruso-script (sibling for [patch] override)
-      uses: actions/checkout@v4
-      with:
-        repository: Hopeless-Labs/ruso-script
-        ref: main
-        path: ruso-script
-    - name: Build
-      working-directory: ruso-cli
-      run: cargo build --verbose
-    - name: Run tests
-      working-directory: ruso-cli
-      run: cargo test --verbose
+      - name: Checkout ruso-cli
+        uses: actions/checkout@v4
+        with:
+          path: ruso-cli
+      - name: Checkout ruso-runtime (sibling for [patch] override)
+        uses: actions/checkout@v4
+        with:
+          repository: Hopeless-Labs/ruso-runtime
+          ref: main
+          path: ruso-runtime
+      - name: Checkout ruso-script (sibling for [patch] override)
+        uses: actions/checkout@v4
+        with:
+          repository: Hopeless-Labs/ruso-script
+          ref: main
+          path: ruso-script
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ruso-cli
+      - name: Check formatting
+        working-directory: ruso-cli
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        working-directory: ruso-cli
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Build
+        working-directory: ruso-cli
+        run: cargo build --verbose
+      - name: Test
+        working-directory: ruso-cli
+        run: cargo test --verbose
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ruso-cli
+        uses: actions/checkout@v4
+        with:
+          path: ruso-cli
+      - name: Checkout ruso-runtime (sibling for [patch] override)
+        uses: actions/checkout@v4
+        with:
+          repository: Hopeless-Labs/ruso-runtime
+          ref: main
+          path: ruso-runtime
+      - name: Checkout ruso-script (sibling for [patch] override)
+        uses: actions/checkout@v4
+        with:
+          repository: Hopeless-Labs/ruso-script
+          ref: main
+          path: ruso-script
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ruso-cli
+      - name: Install cargo-audit
+        run: cargo install --locked cargo-audit || true
+      - name: Audit dependencies
+        working-directory: ruso-cli
+        run: cargo audit
