@@ -60,9 +60,19 @@ pub struct ScanArgs {
     #[arg(long, value_name = "URL|FILE")]
     pub target: String,
 
-    /// Default HTTP timeout for probes without an explicit timeout
+    /// Default connect timeout for HTTP and socket probes (per-probe `timeout`
+    /// in scripts overrides this for HTTP).
     #[arg(long, default_value = "30s", value_name = "DURATION")]
     pub timeout: String,
+
+    /// Per-read I/O timeout for TCP/UDP/DNS socket probes.
+    #[arg(long, default_value = "10s", value_name = "DURATION")]
+    pub read_timeout: String,
+
+    /// Maximum HTTP response body size in bytes. Larger responses are
+    /// truncated; matchers operate on the truncated body.
+    #[arg(long, default_value_t = 10 * 1024 * 1024, value_name = "BYTES")]
+    pub max_response_bytes: usize,
 
     /// Do not follow HTTP redirects
     #[arg(long)]
@@ -107,8 +117,17 @@ pub struct ExecArgs {
     #[arg(long, value_name = "URL|FILE")]
     pub target: String,
 
+    /// Default connect timeout for HTTP and socket probes.
     #[arg(long, default_value = "30s", value_name = "DURATION")]
     pub timeout: String,
+
+    /// Per-read I/O timeout for TCP/UDP/DNS socket probes.
+    #[arg(long, default_value = "10s", value_name = "DURATION")]
+    pub read_timeout: String,
+
+    /// Maximum HTTP response body size in bytes.
+    #[arg(long, default_value_t = 10 * 1024 * 1024, value_name = "BYTES")]
+    pub max_response_bytes: usize,
 
     #[arg(long)]
     pub no_follow_redirects: bool,
@@ -202,14 +221,14 @@ pub fn validate_source(source: &str, path_display: &str) -> Result<(), ExitCode>
 }
 
 pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, ExitCode> {
-    let default_timeout = ruso_runtime::parse_duration(&args.timeout).map_err(|err| {
-        tracing::error!(timeout = %args.timeout, error = %err, "invalid --timeout");
-        ExitCode::from(1)
-    })?;
+    let default_timeout = parse_cli_duration(&args.timeout, "--timeout")?;
+    let read_timeout = parse_cli_duration(&args.read_timeout, "--read-timeout")?;
 
     Ok(ExecutorConfig {
         base_url: String::new(),
         default_timeout,
+        read_timeout,
+        max_response_bytes: args.max_response_bytes,
         follow_redirect: !args.no_follow_redirects,
         verify_ssl: args.verify_tls,
         proxy: args.proxy.clone(),
@@ -217,17 +236,24 @@ pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, Exit
 }
 
 pub fn executor_base_config(args: &ScanArgs) -> Result<ExecutorConfig, ExitCode> {
-    let default_timeout = ruso_runtime::parse_duration(&args.timeout).map_err(|err| {
-        tracing::error!(timeout = %args.timeout, error = %err, "invalid --timeout");
-        ExitCode::from(1)
-    })?;
+    let default_timeout = parse_cli_duration(&args.timeout, "--timeout")?;
+    let read_timeout = parse_cli_duration(&args.read_timeout, "--read-timeout")?;
 
     Ok(ExecutorConfig {
         base_url: String::new(),
         default_timeout,
+        read_timeout,
+        max_response_bytes: args.max_response_bytes,
         follow_redirect: !args.no_follow_redirects,
         verify_ssl: args.verify_tls,
         proxy: args.proxy.clone(),
+    })
+}
+
+fn parse_cli_duration(value: &str, flag: &str) -> Result<std::time::Duration, ExitCode> {
+    ruso_runtime::parse_duration(value).map_err(|err| {
+        tracing::error!(value = %value, flag = %flag, error = %err, "invalid duration");
+        ExitCode::from(1)
     })
 }
 
