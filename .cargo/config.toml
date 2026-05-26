@@ -1,0 +1,7 @@
+# Local dev override for sibling repos.
+#
+# When ../ruso-runtime and ../ruso-script exist on disk, cargo uses them
+# instead of fetching from git. When they don't exist (e.g. external users
+# running `cargo install --git`), cargo silently falls back to the git
+# dependencies declared in Cargo.toml.
+paths = ["../ruso-runtime", "../ruso-script"]

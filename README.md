@@ -39,6 +39,22 @@ ruso-runtime = { git = "https://github.com/Hopeless-Labs/ruso-runtime.git", bran
 ruso-script = { git = "https://github.com/Hopeless-Labs/ruso-script.git", branch = "main" }
 ```
 
+## Local development
+
+To work against local checkouts of `ruso-runtime` and `ruso-script`, clone
+them as siblings of this repo:
+
+```
+parent/
+├── ruso-cli/
+├── ruso-runtime/
+└── ruso-script/
+```
+
+The `paths` override in [`.cargo/config.toml`](.cargo/config.toml) picks them
+up automatically. When the sibling directories are absent, cargo falls back
+to the git dependencies above.
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).
