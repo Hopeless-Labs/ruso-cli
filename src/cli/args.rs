@@ -93,6 +93,20 @@ pub struct ScanArgs {
     #[arg(short = 'c', long, default_value_t = 16, value_name = "N")]
     pub concurrency: usize,
 
+    /// Maximum concurrent in-flight scans against a single host. `0` disables
+    /// (only the global `-c` bound applies). Use this to keep a high `-c`
+    /// from piling many connections onto one sensitive target while still
+    /// allowing wide parallelism across many distinct hosts.
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub max_per_host: usize,
+
+    /// Cap on how often a new script run may start, in scripts per second.
+    /// `0` disables the cap. This throttles *script-launch* rate at the
+    /// orchestrator — an individual script can still send many probes once
+    /// running, so this is a coarse safety cap, not a per-request limit.
+    #[arg(long, default_value_t = 0, value_name = "RPS")]
+    pub rps: u32,
+
     /// Wall-clock budget per script run. Hostile or buggy bytecode (huge
     /// `repeat`, deep loops) cannot run beyond this. Default `5m`.
     #[arg(long, default_value = "5m", value_name = "DURATION")]
@@ -154,6 +168,16 @@ pub struct ExecArgs {
     /// Maximum number of (target × bytecode) combinations to run in parallel.
     #[arg(short = 'c', long, default_value_t = 16, value_name = "N")]
     pub concurrency: usize,
+
+    /// Maximum concurrent in-flight scans against a single host. See
+    /// `scan --max-per-host`. `0` disables (default).
+    #[arg(long, default_value_t = 0, value_name = "N")]
+    pub max_per_host: usize,
+
+    /// Cap on script-launch rate in scripts per second. See `scan --rps`.
+    /// `0` disables (default).
+    #[arg(long, default_value_t = 0, value_name = "RPS")]
+    pub rps: u32,
 
     /// Wall-clock budget per script run. Default `5m`.
     #[arg(long, default_value = "5m", value_name = "DURATION")]

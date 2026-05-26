@@ -4,6 +4,7 @@ mod args;
 mod discover;
 mod report;
 mod targets;
+mod throttle;
 mod ui;
 
 use std::path::Path;
@@ -28,6 +29,7 @@ use self::report::{
     ScanResultRecord, ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report,
     print_live_run, validate_report_options,
 };
+use self::throttle::{HostThrottle, RateLimiter};
 
 /// Binary entry: parse argv, init logging, dispatch subcommands.
 pub async fn run() -> process::ExitCode {
@@ -190,6 +192,8 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         &prepared_scripts,
         &base_config,
         args.concurrency.max(1),
+        HostThrottle::new(args.max_per_host),
+        RateLimiter::per_second(args.rps),
         args.output,
         verbose,
         multi_target,
@@ -281,6 +285,8 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         &prepared_scripts,
         &base_config,
         args.concurrency.max(1),
+        HostThrottle::new(args.max_per_host),
+        RateLimiter::per_second(args.rps),
         args.output,
         verbose,
         multi_target,
@@ -333,6 +339,8 @@ async fn run_scan_pipeline(
     prepared: &[PreparedScript],
     base_config: &ruso_runtime::ExecutorConfig,
     concurrency: usize,
+    host_throttle: HostThrottle,
+    rate_limiter: RateLimiter,
     output: OutputFormat,
     verbose: bool,
     multi_target: bool,
@@ -356,7 +364,16 @@ async fn run_scan_pipeline(
             let target = targets[ti].clone();
             let prepared = &prepared[si];
             let config = executor_config_for_target(base_config, &target);
+            let host_throttle = host_throttle.clone();
+            let rate_limiter = rate_limiter.clone();
             async move {
+                // Order matters: take the per-host slot first, then the RPS
+                // token. That way the rate limiter only consumes a slot for
+                // a run that is actually about to start, instead of burning
+                // budget on jobs still queued behind a host's permit.
+                let host = throttle::host_key(&target);
+                let _host_permit = host_throttle.acquire(&host).await;
+                rate_limiter.acquire().await;
                 let (label, exec_result) = match prepared {
                     PreparedScript::Ready { label, bytecode } => {
                         let program = Arc::clone(bytecode);

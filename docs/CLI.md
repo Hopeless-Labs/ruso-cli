@@ -68,6 +68,8 @@ ruso exec --bytecode ./built/ --target targets.txt -v
 | `--proxy` | HTTP proxy |
 | `--script-timeout` | Per-script wall-clock budget (default `5m`) |
 | `--concurrency` | Parallel (target × script) runs (default `16`) |
+| `--max-per-host` | Cap concurrent in-flight scans against a single host (default `0` = disabled; only `--concurrency` applies). Prevents a high `-c` from piling many connections onto one sensitive target while still allowing wide parallelism across distinct hosts. |
+| `--rps` | Cap on how often a new script run may start, scripts per second (default `0` = disabled). Coarse safety cap at the orchestrator: a running script can still send many probes. |
 | `--output` | `human`, `json`, `csv` |
 | `--report` | Required for json/csv |
 
