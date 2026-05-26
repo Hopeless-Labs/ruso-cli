@@ -34,8 +34,14 @@ pub struct ScanResultRecord {
     pub detected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<String>,
+    /// Genuine error (parse/network/runtime failure). Distinct from
+    /// `skip_reason`, which records a planned skip such as "port closed".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Why a run was skipped (e.g. `port 80 closed`). `None` for runs
+    /// that actually executed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<FindingRecord>,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -82,21 +88,26 @@ pub struct FindingRecord {
 }
 
 impl ScanRunReport {
-    pub fn push_result(
-        &mut self,
-        target: String,
-        script: String,
-        result: Result<ExecutionResult, String>,
-    ) {
-        let record = match result {
-            Ok(exec) => ScanResultRecord::from_execution(target, script, &exec),
-            Err(message) => ScanResultRecord::from_error(target, script, message),
-        };
+    /// Append an already-built [`ScanResultRecord`] and update the summary
+    /// counters. The concurrent scan pipeline uses this to feed back records
+    /// it built while running futures in parallel, where the original
+    /// `ExecutionResult` has already been consumed.
+    ///
+    /// Buckets are exclusive and resolved in priority order:
+    /// 1. `skipped` — run did not execute (port closed)
+    /// 2. `detected` — finding emitted
+    /// 3. `failed` — `!success` for any reason (Fail opcode, IO error, …)
+    /// 4. `clean`  — ran successfully with no finding
+    ///
+    /// Earlier revisions required both `!success` *and* `error.is_some()` to
+    /// land in "failed", which silently bucketed a Fail-opcode result with
+    /// no error message into "clean".
+    pub fn push_record(&mut self, record: ScanResultRecord) {
         if record.skipped {
             self.summary.skipped += 1;
         } else if record.detected {
             self.summary.detected += 1;
-        } else if !record.success && record.error.is_some() {
+        } else if !record.success {
             self.summary.failed += 1;
         } else {
             self.summary.clean += 1;
@@ -137,7 +148,15 @@ impl ScanResultRecord {
             success: result.success,
             detected: result.detected,
             check: result.metadata.name.clone(),
-            error: result.skip_reason.clone(),
+            // A skipped run is not an error — keep the two channels separate
+            // so consumers can tell "did the run fail?" from "was the run
+            // intentionally skipped?".
+            error: None,
+            skip_reason: if result.skipped {
+                result.skip_reason.clone()
+            } else {
+                None
+            },
             findings,
             skipped: result.skipped,
             port_checks: port_checks_to_records(&result.port_checks),
@@ -152,6 +171,7 @@ impl ScanResultRecord {
             detected: false,
             check: None,
             error: Some(message),
+            skip_reason: None,
             findings: Vec::new(),
             skipped: false,
             port_checks: Vec::new(),
@@ -237,23 +257,24 @@ pub fn emit_scan_report(
 
 fn write_json_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                format!("create report directory {}: {err}", parent.display())
-            })?;
-        }
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create report directory {}: {err}", parent.display()))?;
+    }
     let json = serde_json::to_string_pretty(report).map_err(|err| format!("encode json: {err}"))?;
     std::fs::write(path, json).map_err(|err| format!("write report {}: {err}", path.display()))
 }
 
 fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
     if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|err| {
-                format!("create report directory {}: {err}", parent.display())
-            })?;
-        }
-    let file = File::create(path).map_err(|err| format!("create report {}: {err}", path.display()))?;
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .map_err(|err| format!("create report directory {}: {err}", parent.display()))?;
+    }
+    let file =
+        File::create(path).map_err(|err| format!("create report {}: {err}", path.display()))?;
     let mut writer = csv::Writer::from_writer(file);
     writer
         .write_record([
@@ -261,6 +282,8 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
             "script",
             "success",
             "detected",
+            "skipped",
+            "skip_reason",
             "check",
             "severity",
             "finding_name",
@@ -299,21 +322,13 @@ fn write_csv_row(
     row: &ScanResultRecord,
     finding: Option<&FindingRecord>,
 ) -> Result<(), String> {
-    let evidence = finding
-        .map(|f| f.evidence.join(" | "))
-        .unwrap_or_default();
-    let cve = finding
-        .map(|f| f.cve.join(" | "))
-        .unwrap_or_default();
-    let cwe = finding
-        .map(|f| f.cwe.join(" | "))
-        .unwrap_or_default();
+    let evidence = finding.map(|f| f.evidence.join(" | ")).unwrap_or_default();
+    let cve = finding.map(|f| f.cve.join(" | ")).unwrap_or_default();
+    let cwe = finding.map(|f| f.cwe.join(" | ")).unwrap_or_default();
     let references = finding
         .map(|f| f.references.join(" | "))
         .unwrap_or_default();
-    let cvss = finding
-        .map(|f| f.cvss.join(" | "))
-        .unwrap_or_default();
+    let cvss = finding.map(|f| f.cvss.join(" | ")).unwrap_or_default();
     let cvss_score = finding
         .map(|f| f.cvss_score.join(" | "))
         .unwrap_or_default();
@@ -326,6 +341,8 @@ fn write_csv_row(
             row.script.as_str(),
             if row.success { "true" } else { "false" },
             if row.detected { "true" } else { "false" },
+            if row.skipped { "true" } else { "false" },
+            row.skip_reason.as_deref().unwrap_or(""),
             row.check.as_deref().unwrap_or(""),
             finding.map(|f| f.severity.as_str()).unwrap_or(""),
             finding.map(|f| f.name.as_str()).unwrap_or(""),
@@ -351,7 +368,7 @@ pub fn print_live_run(record: &ScanResultRecord, multi_target: bool) {
     }
     print!("{}: ", script_label(&record.script));
     if record.skipped {
-        let msg = record.error.as_deref().unwrap_or("port closed");
+        let msg = record.skip_reason.as_deref().unwrap_or("port closed");
         println!("skipped ({msg})");
         return;
     }
@@ -455,9 +472,95 @@ fn truncate_evidence(text: &str, max_len: usize) -> String {
 }
 
 pub fn exit_code_from_report(report: &ScanRunReport) -> i32 {
-    if report.summary.failed > 0 {
-        1
-    } else {
-        0
+    if report.summary.failed > 0 { 1 } else { 0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_report() -> ScanRunReport {
+        ScanRunReport {
+            targets: vec!["t".into()],
+            scripts: vec!["s".into()],
+            summary: ScanSummary {
+                total_runs: 0,
+                detected: 0,
+                failed: 0,
+                skipped: 0,
+                clean: 0,
+            },
+            results: Vec::new(),
+        }
+    }
+
+    fn record(target: &str, script: &str) -> ScanResultRecord {
+        ScanResultRecord {
+            target: target.into(),
+            script: script.into(),
+            success: true,
+            detected: false,
+            check: None,
+            error: None,
+            skip_reason: None,
+            findings: Vec::new(),
+            skipped: false,
+            port_checks: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn classifies_clean_run() {
+        let mut report = empty_report();
+        report.push_record(record("t", "s"));
+        assert_eq!(report.summary.clean, 1);
+        assert_eq!(report.summary.failed, 0);
+    }
+
+    #[test]
+    fn classifies_failed_when_success_false_without_error_string() {
+        // Regression for M3: a Fail-opcode result has `success=false` but
+        // no `error` string. It must land in `failed`, not `clean`.
+        let mut report = empty_report();
+        let mut r = record("t", "s");
+        r.success = false;
+        report.push_record(r);
+        assert_eq!(report.summary.failed, 1);
+        assert_eq!(report.summary.clean, 0);
+    }
+
+    #[test]
+    fn classifies_skipped_runs_correctly() {
+        let mut report = empty_report();
+        let mut r = record("t", "s");
+        r.skipped = true;
+        r.skip_reason = Some("port 80 closed".into());
+        report.push_record(r);
+        assert_eq!(report.summary.skipped, 1);
+        assert_eq!(report.summary.failed, 0);
+        assert_eq!(report.summary.clean, 0);
+    }
+
+    #[test]
+    fn classifies_detected_runs_correctly() {
+        let mut report = empty_report();
+        let mut r = record("t", "s");
+        r.detected = true;
+        report.push_record(r);
+        assert_eq!(report.summary.detected, 1);
+    }
+
+    #[test]
+    fn skip_reason_is_distinct_from_error() {
+        // Regression for M5: skipped records used to put their reason into
+        // `error`. They are now separate channels.
+        let mut report = empty_report();
+        let mut r = record("t", "s");
+        r.skipped = true;
+        r.skip_reason = Some("port closed".into());
+        report.push_record(r);
+        let stored = &report.results[0];
+        assert!(stored.error.is_none());
+        assert_eq!(stored.skip_reason.as_deref(), Some("port closed"));
     }
 }

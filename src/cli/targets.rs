@@ -78,12 +78,15 @@ fn read_targets_file(path: &Path) -> Result<Vec<String>, TargetError> {
 }
 
 fn parse_target_line(line: &str) -> Option<String> {
-    let line = line.split('#').next()?.trim();
-    if line.is_empty() {
+    // Only treat `#` as a comment when it starts the line — splitting on
+    // `#` everywhere would mangle URLs like `https://app/route#section`,
+    // dropping the fragment that some SPAs route off of.
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;
     }
-    if is_url(line) {
-        Some(line.to_string())
+    if is_url(trimmed) {
+        Some(trimmed.to_string())
     } else {
         None
     }
@@ -91,7 +94,16 @@ fn parse_target_line(line: &str) -> Option<String> {
 
 fn is_url(value: &str) -> bool {
     let value = value.trim();
-    value.starts_with("http://") || value.starts_with("https://")
+    let rest = if let Some(rest) = value.strip_prefix("http://") {
+        rest
+    } else if let Some(rest) = value.strip_prefix("https://") {
+        rest
+    } else {
+        return false;
+    };
+    // Reject "http://" with no authority — the bare scheme is not a usable
+    // target and would otherwise pass the original startswith-only check.
+    !rest.is_empty() && !rest.starts_with('/')
 }
 
 #[cfg(test)]
@@ -122,5 +134,33 @@ mod tests {
         let urls = discover_targets(path.to_str().unwrap()).unwrap();
         assert_eq!(urls.len(), 2);
         assert_eq!(urls[0], "http://127.0.0.1:19080");
+    }
+
+    #[test]
+    fn preserves_url_fragment() {
+        // Regression for M6: `#section` mid-URL must not be stripped as a
+        // comment. SPAs commonly route on the fragment.
+        let url = parse_target_line("https://app.example/path#section").unwrap();
+        assert_eq!(url, "https://app.example/path#section");
+    }
+
+    #[test]
+    fn comment_line_with_hash_first_is_ignored() {
+        assert!(parse_target_line("# https://example.com").is_none());
+        assert!(parse_target_line("   # comment").is_none());
+    }
+
+    #[test]
+    fn is_url_rejects_bare_scheme() {
+        assert!(!is_url("http://"));
+        assert!(!is_url("https://"));
+        assert!(!is_url("https:///just-a-path"));
+    }
+
+    #[test]
+    fn is_url_accepts_normal_urls() {
+        assert!(is_url("http://example.com"));
+        assert!(is_url("https://127.0.0.1:8443"));
+        assert!(is_url("http://[::1]:8080"));
     }
 }

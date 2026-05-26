@@ -42,9 +42,12 @@ ruso compile --script check.ruso
 ruso compile --script ./checks/
 ```
 
-- Writes **lowercase hex** of the RUSO v1 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
+- Writes **lowercase hex** of the RUSO v2 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
 - No stdout on success.
 - `exec` decodes hex from `.bc` before running (legacy raw-binary `.bc` with `RUSO` header still works).
+- v1 `.bc` files emitted by previous releases must be recompiled — the
+  `CmpValue::Number` payload widened from `u32` to `u64`, and decoding a
+  v1 file now returns `BadVersion(1)`.
 
 ## `exec`
 
@@ -58,11 +61,19 @@ ruso exec --bytecode ./built/ --target targets.txt -v
 | `--bytecode` | `.bc` file or directory of `.bc` files (hex from `compile`) |
 | `--target` | URL or file (one URL per line) |
 | `--timeout` | Default `30s` |
+| `--read-timeout` | Per-read I/O timeout for socket probes (default `10s`) |
+| `--max-response-bytes` | HTTP body cap (default 10 MiB) |
 | `--no-follow-redirects` | HTTP |
-| `--verify-tls` | Verify TLS certs (default: off, scanner mode). HTTP `verify_ssl` in script overrides per probe |
+| `--insecure` | Disable TLS certificate verification. Defaults to **off** (TLS *is* verified); opt-in only for environments where you accept MITM and finding-injection risk. Emits a runtime warning when active. HTTP `verify_ssl` in the script still overrides per probe |
 | `--proxy` | HTTP proxy |
+| `--script-timeout` | Per-script wall-clock budget (default `5m`) |
+| `--concurrency` | Parallel (target × script) runs (default `16`) |
 | `--output` | `human`, `json`, `csv` |
 | `--report` | Required for json/csv |
+
+> **Migration note:** the previous `--verify-tls` flag (a positive opt-in
+> for verification, disabled by default) is gone. Verification is now the
+> default; pass `--insecure` to restore the old behaviour.
 
 ### Port checks (`ruso-runtime`)
 
@@ -98,6 +109,22 @@ Findings include check metadata from the script `metadata { … }` block. Beside
 | `mitigation` | Repeatable `mitigation "…"` lines (remediation guidance) |
 
 Empty lists are omitted from JSON (`skip_serializing_if`).
+
+### `skip_reason` vs `error`
+
+JSON and CSV reports carry **two** separate channels for non-finding
+outcomes:
+
+- `skip_reason` is set when a run did not execute because a required
+  port was closed (`port 80 closed`, etc.). `skipped` is `true` in the
+  same row.
+- `error` is set only for genuine failures (parse failure, IO error,
+  runtime `fail` opcode, SSRF guard, budget exceeded).
+
+Earlier revisions wrote the skip reason into `error`, which made
+"intentional skip" indistinguishable from "the run blew up" in
+downstream tooling. The CSV header now includes `skipped` and
+`skip_reason` columns.
 
 ## Scan target and socket checks
 

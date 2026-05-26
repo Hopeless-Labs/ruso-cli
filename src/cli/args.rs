@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use ruso_runtime::ExecutorConfig;
-use ruso_script::{compile_program, parse, CompileError};
+use ruso_script::{CompileError, compile_program, parse};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -78,13 +78,25 @@ pub struct ScanArgs {
     #[arg(long)]
     pub no_follow_redirects: bool,
 
-    /// Verify TLS certificates for HTTPS and TCP `tls` probes (default: skip verify, scanner mode)
+    /// Disable TLS certificate verification (HTTPS and TCP `tls` probes).
+    /// Default is to verify — pass `--insecure` only for environments where
+    /// you accept MITM/finding-injection risk (e.g. self-signed lab certs).
     #[arg(long)]
-    pub verify_tls: bool,
+    pub insecure: bool,
 
     /// HTTP proxy URL (e.g. `http://127.0.0.1:8080`)
     #[arg(long, value_name = "URL")]
     pub proxy: Option<String>,
+
+    /// Maximum number of (target × script) combinations to run in parallel.
+    /// Increase for faster bulk scans; decrease to be gentler on targets.
+    #[arg(short = 'c', long, default_value_t = 16, value_name = "N")]
+    pub concurrency: usize,
+
+    /// Wall-clock budget per script run. Hostile or buggy bytecode (huge
+    /// `repeat`, deep loops) cannot run beyond this. Default `5m`.
+    #[arg(long, default_value = "5m", value_name = "DURATION")]
+    pub script_timeout: String,
 
     /// Report format: human prints findings to stdout; json/csv require --report
     #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
@@ -132,11 +144,20 @@ pub struct ExecArgs {
     #[arg(long)]
     pub no_follow_redirects: bool,
 
+    /// Disable TLS certificate verification. See `scan --insecure`.
     #[arg(long)]
-    pub verify_tls: bool,
+    pub insecure: bool,
 
     #[arg(long, value_name = "URL")]
     pub proxy: Option<String>,
+
+    /// Maximum number of (target × bytecode) combinations to run in parallel.
+    #[arg(short = 'c', long, default_value_t = 16, value_name = "N")]
+    pub concurrency: usize,
+
+    /// Wall-clock budget per script run. Default `5m`.
+    #[arg(long, default_value = "5m", value_name = "DURATION")]
+    pub script_timeout: String,
 
     #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
     pub output: OutputFormat,
@@ -223,6 +244,16 @@ pub fn validate_source(source: &str, path_display: &str) -> Result<(), ExitCode>
 pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, ExitCode> {
     let default_timeout = parse_cli_duration(&args.timeout, "--timeout")?;
     let read_timeout = parse_cli_duration(&args.read_timeout, "--read-timeout")?;
+    let max_script_duration = Some(parse_cli_duration(
+        &args.script_timeout,
+        "--script-timeout",
+    )?);
+
+    if args.insecure {
+        tracing::warn!(
+            "TLS verification disabled via --insecure; MITM can plant findings or expose request data"
+        );
+    }
 
     Ok(ExecutorConfig {
         base_url: String::new(),
@@ -230,14 +261,25 @@ pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, Exit
         read_timeout,
         max_response_bytes: args.max_response_bytes,
         follow_redirect: !args.no_follow_redirects,
-        verify_ssl: args.verify_tls,
+        verify_ssl: !args.insecure,
         proxy: args.proxy.clone(),
+        max_script_duration,
     })
 }
 
 pub fn executor_base_config(args: &ScanArgs) -> Result<ExecutorConfig, ExitCode> {
     let default_timeout = parse_cli_duration(&args.timeout, "--timeout")?;
     let read_timeout = parse_cli_duration(&args.read_timeout, "--read-timeout")?;
+    let max_script_duration = Some(parse_cli_duration(
+        &args.script_timeout,
+        "--script-timeout",
+    )?);
+
+    if args.insecure {
+        tracing::warn!(
+            "TLS verification disabled via --insecure; MITM can plant findings or expose request data"
+        );
+    }
 
     Ok(ExecutorConfig {
         base_url: String::new(),
@@ -245,8 +287,9 @@ pub fn executor_base_config(args: &ScanArgs) -> Result<ExecutorConfig, ExitCode>
         read_timeout,
         max_response_bytes: args.max_response_bytes,
         follow_redirect: !args.no_follow_redirects,
-        verify_ssl: args.verify_tls,
+        verify_ssl: !args.insecure,
         proxy: args.proxy.clone(),
+        max_script_duration,
     })
 }
 

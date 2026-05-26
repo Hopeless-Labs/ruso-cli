@@ -1,5 +1,6 @@
 //! Discover `.ruso` scripts and `.bc` bytecode files from a path.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
@@ -41,7 +42,8 @@ pub fn discover_scripts(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
 
     if path.is_dir() {
         let mut scripts = Vec::new();
-        collect_by_extension(path, "ruso", &mut scripts)?;
+        let mut visited = HashSet::new();
+        collect_by_extension(path, "ruso", &mut scripts, &mut visited)?;
         if scripts.is_empty() {
             return Err(DiscoverError::EmptyScripts(path.to_path_buf()));
         }
@@ -70,7 +72,8 @@ pub fn discover_bytecode(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
 
     if path.is_dir() {
         let mut files = Vec::new();
-        collect_by_extension(path, "bc", &mut files)?;
+        let mut visited = HashSet::new();
+        collect_by_extension(path, "bc", &mut files, &mut visited)?;
         if files.is_empty() {
             return Err(DiscoverError::EmptyBytecode(path.to_path_buf()));
         }
@@ -90,7 +93,19 @@ fn collect_by_extension(
     dir: &Path,
     extension: &str,
     out: &mut Vec<PathBuf>,
+    visited: &mut HashSet<PathBuf>,
 ) -> Result<(), DiscoverError> {
+    // Canonicalise to follow symlinks and cycle-detect — without this a
+    // symlink loop (`a -> b`, `b -> a`) would recurse until the stack
+    // overflowed.
+    let canonical = std::fs::canonicalize(dir).map_err(|source| DiscoverError::Io {
+        path: dir.to_path_buf(),
+        source,
+    })?;
+    if !visited.insert(canonical) {
+        return Ok(());
+    }
+
     let read_dir = std::fs::read_dir(dir).map_err(|source| DiscoverError::Io {
         path: dir.to_path_buf(),
         source,
@@ -108,7 +123,7 @@ fn collect_by_extension(
         })?;
 
         if file_type.is_dir() {
-            collect_by_extension(&path, extension, out)?;
+            collect_by_extension(&path, extension, out, visited)?;
         } else if path.extension().is_some_and(|ext| ext == extension) {
             out.push(path);
         }

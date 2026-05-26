@@ -6,18 +6,17 @@ mod report;
 mod targets;
 mod ui;
 
-use std::future::Future;
 use std::path::Path;
 use std::process;
+use std::sync::Arc;
 
 use clap::Parser as _;
 
 pub use args::{Cli, Command, OutputFormat, ScanArgs};
 
-use ruso_runtime::{bytes_to_hex, hex_to_bytes, MAGIC};
+use ruso_runtime::{MAGIC, bytes_to_hex, hex_to_bytes};
 use ruso_script::{
-    compile_program, encode_bytecode, load_program, run_bytecode, run_bytes, BytecodeProgram,
-    CompileError,
+    BytecodeProgram, CompileError, compile_program, encode_bytecode, load_program, run_program,
 };
 
 use self::args::{
@@ -26,8 +25,8 @@ use self::args::{
 };
 use self::discover::{bytecode_path_for_script, discover_bytecode, discover_scripts};
 use self::report::{
-    emit_scan_report, exit_code_from_report, print_live_run, validate_report_options,
-    ScanResultRecord, ScanRunReport, ScanSummary,
+    ScanResultRecord, ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report,
+    print_live_run, validate_report_options,
 };
 
 /// Binary entry: parse argv, init logging, dispatch subcommands.
@@ -159,63 +158,53 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         results: Vec::with_capacity(targets.len() * bytecode_files.len()),
     };
 
-    for target in &targets {
-        let config = executor_config_for_target(&base_config, target);
-        for bc_path in &bytecode_files {
-            let bytes = match read_bytecode_file(bc_path) {
-                Ok(b) => b,
-                Err(err) => {
-                    ui::error(&format!("{}: {err}", bc_path.display()));
-                    return process::ExitCode::from(1);
-                }
-            };
-
-            let label = bc_path.display().to_string();
-            let cfg = config.clone();
-            let scan_result = with_spinner(verbose, || run_bytes(&bytes, cfg)).await;
-            let exec_result = match scan_result {
-                Ok(result) => Ok(result),
-                Err(err) => Err(err.to_string()),
-            };
-
-            if args.output == OutputFormat::Human && verbose {
-                let record = match &exec_result {
-                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
-                    Err(msg) => ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone()),
-                };
-                print_live_run(&record, multi_target);
+    // Decode each .bc file once and share the resulting bytecode across
+    // targets via Arc — same optimisation as `cmd_scan`.
+    let mut prepared_bytecode: Vec<(String, Arc<BytecodeProgram>)> =
+        Vec::with_capacity(bytecode_files.len());
+    for bc_path in &bytecode_files {
+        let bytes = match read_bytecode_file(bc_path) {
+            Ok(b) => b,
+            Err(err) => {
+                ui::error(&format!("{}: {err}", bc_path.display()));
+                return process::ExitCode::from(1);
             }
-
-            scan_report.push_result(target.clone(), label, exec_result);
-        }
+        };
+        let program = match ruso_runtime::decode_bytecode(&bytes) {
+            Ok(p) => p,
+            Err(err) => {
+                ui::error(&format!("{}: {err}", bc_path.display()));
+                return process::ExitCode::from(1);
+            }
+        };
+        prepared_bytecode.push((bc_path.display().to_string(), Arc::new(program)));
     }
+
+    let prepared_scripts: Vec<PreparedScript> = prepared_bytecode
+        .into_iter()
+        .map(|(label, bytecode)| PreparedScript::Ready { label, bytecode })
+        .collect();
+
+    run_scan_pipeline(
+        &targets,
+        &prepared_scripts,
+        &base_config,
+        args.concurrency.max(1),
+        args.output,
+        verbose,
+        multi_target,
+        &mut scan_report,
+    )
+    .await;
 
     scan_report.finish();
 
-    if let Err(err) = emit_scan_report(
-        &scan_report,
-        args.output,
-        args.report.as_deref(),
-        verbose,
-    ) {
+    if let Err(err) = emit_scan_report(&scan_report, args.output, args.report.as_deref(), verbose) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
 
     process::ExitCode::from(exit_code_from_report(&scan_report) as u8)
-}
-
-async fn with_spinner<F, Fut, T>(verbose: bool, work: F) -> T
-where
-    F: FnOnce() -> Fut,
-    Fut: Future<Output = T>,
-{
-    if verbose {
-        work().await
-    } else {
-        let _spinner = ui::Spinner::start();
-        work().await
-    }
 }
 
 async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
@@ -261,13 +250,19 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         results: Vec::with_capacity(scan_targets.len() * scripts.len()),
     };
 
+    // Compile each script once and wrap the bytecode in an Arc so multiple
+    // (target × script) iterations share the same program (and its compiled
+    // regex caches) via cheap ref-count clones rather than deep copies.
     let prepared_scripts: Vec<PreparedScript> = scripts
         .iter()
         .map(|script_path| {
             let label = script_path.display().to_string();
             match load_program(script_path) {
                 Ok(program) => match compile_program(&program) {
-                    Ok(bytecode) => PreparedScript::Ready { label, bytecode },
+                    Ok(bytecode) => PreparedScript::Ready {
+                        label,
+                        bytecode: Arc::new(bytecode),
+                    },
                     Err(CompileError::MissingFindingTitle) => PreparedScript::Failed {
                         label,
                         error: "missing `name` or `report` metadata (required when using match/evidence)".into(),
@@ -281,43 +276,21 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         })
         .collect();
 
-    for target in &scan_targets {
-        let config = executor_config_for_target(&base_config, target);
-        for prepared in &prepared_scripts {
-            let (label, exec_result) = match prepared {
-                PreparedScript::Ready { label, bytecode } => {
-                    let cfg = config.clone();
-                    let scan_result =
-                        with_spinner(verbose, || run_bytecode(bytecode, cfg)).await;
-                    let exec_result = match scan_result {
-                        Ok(result) => Ok(result),
-                        Err(err) => Err(err.to_string()),
-                    };
-                    (label.clone(), exec_result)
-                }
-                PreparedScript::Failed { label, error } => (label.clone(), Err(error.clone())),
-            };
-
-            if args.output == OutputFormat::Human && verbose {
-                let record = match &exec_result {
-                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
-                    Err(msg) => ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone()),
-                };
-                print_live_run(&record, multi_target);
-            }
-
-            scan_report.push_result(target.clone(), label, exec_result);
-        }
-    }
+    run_scan_pipeline(
+        &scan_targets,
+        &prepared_scripts,
+        &base_config,
+        args.concurrency.max(1),
+        args.output,
+        verbose,
+        multi_target,
+        &mut scan_report,
+    )
+    .await;
 
     scan_report.finish();
 
-    if let Err(err) = emit_scan_report(
-        &scan_report,
-        args.output,
-        args.report.as_deref(),
-        verbose,
-    ) {
+    if let Err(err) = emit_scan_report(&scan_report, args.output, args.report.as_deref(), verbose) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -328,7 +301,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
 enum PreparedScript {
     Ready {
         label: String,
-        bytecode: BytecodeProgram,
+        bytecode: Arc<BytecodeProgram>,
     },
     Failed {
         label: String,
@@ -345,4 +318,82 @@ fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
     let text = std::str::from_utf8(&data)
         .map_err(|err| format!("invalid .bc file (expected hex text): {err}"))?;
     hex_to_bytes(text).map_err(|err| err.to_string())
+}
+
+/// Fan out (target × script) work over a bounded concurrency pool and feed
+/// results back into `scan_report` in (target, script) order.
+///
+/// `buffer_unordered(N)` runs up to N futures concurrently and yields results
+/// as they finish, so live output may interleave when N > 1. The final
+/// `scan_report.results` list is re-sorted by the work index to keep file
+/// output (json/csv) deterministic regardless of completion order.
+#[allow(clippy::too_many_arguments)]
+async fn run_scan_pipeline(
+    targets: &[String],
+    prepared: &[PreparedScript],
+    base_config: &ruso_runtime::ExecutorConfig,
+    concurrency: usize,
+    output: OutputFormat,
+    verbose: bool,
+    multi_target: bool,
+    scan_report: &mut ScanRunReport,
+) {
+    use futures::stream::{self, StreamExt};
+
+    // Build the full (target_idx, script_idx) work plan up-front so results
+    // can be reattached to their slot for deterministic ordering.
+    let mut jobs: Vec<(usize, usize)> = Vec::with_capacity(targets.len() * prepared.len());
+    for (ti, _) in targets.iter().enumerate() {
+        for (si, _) in prepared.iter().enumerate() {
+            jobs.push((ti, si));
+        }
+    }
+
+    let mut completed: Vec<Option<ScanResultRecord>> = (0..jobs.len()).map(|_| None).collect();
+
+    let mut stream = stream::iter(jobs.into_iter().enumerate())
+        .map(|(idx, (ti, si))| {
+            let target = targets[ti].clone();
+            let prepared = &prepared[si];
+            let config = executor_config_for_target(base_config, &target);
+            async move {
+                let (label, exec_result) = match prepared {
+                    PreparedScript::Ready { label, bytecode } => {
+                        let program = Arc::clone(bytecode);
+                        let scan_result = run_program(program, config).await;
+                        let exec_result = match scan_result {
+                            Ok(result) => Ok(result),
+                            Err(err) => Err(err.to_string()),
+                        };
+                        (label.clone(), exec_result)
+                    }
+                    PreparedScript::Failed { label, error } => (label.clone(), Err(error.clone())),
+                };
+                let record = match &exec_result {
+                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
+                    Err(msg) => {
+                        ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone())
+                    }
+                };
+                (idx, record)
+            }
+        })
+        .buffer_unordered(concurrency);
+
+    while let Some((idx, record)) = stream.next().await {
+        if output == OutputFormat::Human && verbose {
+            print_live_run(&record, multi_target);
+        }
+        completed[idx] = Some(record);
+    }
+
+    // Push records back in their original (target, script) slot order. Each
+    // record already carries the right `success`/`detected`/`error` shape;
+    // `push_record` updates the summary counters in one place — earlier
+    // revisions branched into a second `push_result` path that re-built the
+    // record from an `Err` string, which double-counted some failures and
+    // dropped `port_checks` from error records.
+    for record in completed.into_iter().flatten() {
+        scan_report.push_record(record);
+    }
 }

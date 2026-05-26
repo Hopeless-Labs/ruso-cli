@@ -1042,6 +1042,7 @@ version = "0.1.0-dev"
 dependencies = [
  "clap",
  "csv",
+ "futures",
  "ruso-runtime",
  "ruso-script",
  "serde",
@@ -1060,6 +1061,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rustls",
+ "serde_json",
  "thiserror",
  "tokio",
  "tokio-rustls",
