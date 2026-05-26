@@ -42,12 +42,12 @@ ruso compile --script check.ruso
 ruso compile --script ./checks/
 ```
 
-- Writes **lowercase hex** of the RUSO v2 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
+- Writes **lowercase hex** of the RUSO v1 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
 - No stdout on success.
 - `exec` decodes hex from `.bc` before running (legacy raw-binary `.bc` with `RUSO` header still works).
-- v1 `.bc` files emitted by previous releases must be recompiled — the
-  `CmpValue::Number` payload widened from `u32` to `u64`, and decoding a
-  v1 file now returns `BadVersion(1)`.
+- While the runtime is `0.1.0-dev` the v1 wire format may change between
+  commits without a version bump — recompile your `.bc` files after each
+  upgrade.
 
 ## `exec`
 
