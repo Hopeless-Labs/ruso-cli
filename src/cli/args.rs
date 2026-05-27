@@ -42,13 +42,121 @@ pub enum Command {
 
     /// Run compiled `.bc` against targets
     Exec(ExecArgs),
+
+    /// Save a registry PAT or session token for later use
+    Login(LoginArgs),
+
+    /// Delete the stored registry credential for the current registry
+    Logout(RegistryOnlyArgs),
+
+    /// Print the user the stored credential belongs to
+    Whoami(RegistryOnlyArgs),
+
+    /// Upload a `.ruso` script to the registry
+    Publish(PublishArgs),
+
+    /// Download a `<namespace>/<name>[@<range>]` script into the local cache
+    Install(InstallArgs),
+
+    /// Search published scripts on the registry
+    Search(SearchArgs),
 }
 
 #[derive(Debug, Parser)]
 pub struct ScriptArgs {
-    /// Path to a `.ruso` file, or a directory (all `.ruso` files inside, recursively)
-    #[arg(long, value_name = "PATH")]
-    pub script: PathBuf,
+    /// Path to a `.ruso` file, a directory of `.ruso` files, or a registry
+    /// reference like `<namespace>/<name>[@<semver-range>]`. Registry
+    /// references resolve via the local install cache and the registry
+    /// configured by `--registry` / `$RUSO_REGISTRY_URL`.
+    #[arg(long, value_name = "PATH|REF")]
+    pub script: String,
+}
+
+/// Common `--registry` flag shared by every command that talks to a
+/// backend. Inlined via `#[command(flatten)]` rather than `global` so it
+/// only appears on relevant subcommands.
+#[derive(Debug, Parser)]
+pub struct RegistryArgs {
+    /// Registry base URL. Overrides `$RUSO_REGISTRY_URL` and the built-in
+    /// default.
+    #[arg(long, value_name = "URL")]
+    pub registry: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct RegistryOnlyArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+}
+
+#[derive(Debug, Parser)]
+pub struct LoginArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// PAT (`ruso_pat_...`) or session token (`ruso_sess_...`). Omit to
+    /// read the token from stdin (single line).
+    #[arg(long, value_name = "TOKEN")]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+#[derive(Debug, Parser)]
+pub struct PublishArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// Path to a `.ruso` source file.
+    #[arg(value_name = "PATH")]
+    pub path: PathBuf,
+    /// Visibility for the first publish of this script. Subsequent
+    /// publishes inherit the existing visibility — change with PATCH
+    /// (not yet exposed in the CLI).
+    #[arg(long, value_enum)]
+    pub visibility: Option<Visibility>,
+    /// Override the namespace. Defaults to your username (from `/v1/me`).
+    #[arg(long, value_name = "NAMESPACE")]
+    pub namespace: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct InstallArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// One or more `<namespace>/<name>[@<range>]` references.
+    #[arg(value_name = "REF", required = true, num_args = 1..)]
+    pub refs: Vec<String>,
+    /// Re-download even if a matching version is already cached.
+    #[arg(long)]
+    pub force: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct SearchArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// Free-text query (matches name + description + tags).
+    #[arg(value_name = "QUERY")]
+    pub query: Option<String>,
+    /// Filter by tag. Repeat for AND semantics (`--tag auth --tag rce`).
+    #[arg(long, value_name = "TAG")]
+    pub tag: Vec<String>,
+    #[arg(long, value_name = "SEVERITY")]
+    pub severity: Option<String>,
+    #[arg(long, value_name = "CVE")]
+    pub cve: Option<String>,
+    #[arg(long, value_name = "NAMESPACE")]
+    pub namespace: Option<String>,
+    #[arg(long, default_value_t = 1, value_name = "N")]
+    pub page: u32,
+    #[arg(long, default_value_t = 20, value_name = "N")]
+    pub per_page: u32,
+    /// Emit results as JSON to stdout instead of the table view.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -119,6 +227,10 @@ pub struct ScanArgs {
     /// Write json/csv report to this file (required when --output is json or csv)
     #[arg(long, value_name = "PATH")]
     pub report: Option<PathBuf>,
+
+    /// Registry to resolve `<namespace>/<name>[@<range>]` references against.
+    #[command(flatten)]
+    pub registry: RegistryArgs,
 }
 
 #[derive(Debug, Parser)]
@@ -135,9 +247,10 @@ pub struct CompileArgs {
 
 #[derive(Debug, Parser)]
 pub struct ExecArgs {
-    /// Path to a `.bc` file, or a directory (all `.bc` files inside, recursively)
-    #[arg(long, value_name = "PATH")]
-    pub bytecode: PathBuf,
+    /// Path to a `.bc` file, a directory of `.bc` files, or a registry
+    /// reference like `<namespace>/<name>[@<semver-range>]`.
+    #[arg(long, value_name = "PATH|REF")]
+    pub bytecode: String,
 
     /// Target URL (`https://…`) or path to a file with one URL per line
     #[arg(long, value_name = "URL|FILE")]
@@ -188,6 +301,10 @@ pub struct ExecArgs {
 
     #[arg(long, value_name = "PATH")]
     pub report: Option<PathBuf>,
+
+    /// Registry to resolve `<namespace>/<name>[@<range>]` references against.
+    #[command(flatten)]
+    pub registry: RegistryArgs,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
@@ -241,7 +358,7 @@ impl Cli {
     }
 }
 
-pub fn load_script(path: &PathBuf) -> Result<String, ExitCode> {
+pub fn load_script(path: &std::path::Path) -> Result<String, ExitCode> {
     std::fs::read_to_string(path).map_err(|err| {
         tracing::error!(script = %path.display(), error = %err, "failed to read script");
         ExitCode::from(1)

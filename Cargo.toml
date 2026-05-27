@@ -22,6 +22,12 @@ csv = "1.3"
 thiserror = "2.0.12"
 futures = { version = "0.3", default-features = false, features = ["std"] }
 
+# Registry client (login/publish/install/search). reqwest with rustls so we
+# don't drag in openssl; multipart for `publish`, json for everything else.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "stream"] }
+semver = "1"
+dirs = "5"
+
 # Local dev override lives in .cargo/config.toml (`paths` array), not here.
 # Putting `[patch]` in Cargo.toml breaks `cargo install --git` for external
 # users because cargo resolves `../ruso-runtime` relative to its temp checkout

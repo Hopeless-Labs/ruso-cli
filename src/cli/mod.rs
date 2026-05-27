@@ -1,7 +1,11 @@
 //! CLI: argument parsing, scan orchestration, and terminal output.
 
 mod args;
-mod discover;
+mod cmd_registry;
+mod credentials;
+pub mod discover;
+mod install_store;
+pub mod registry;
 mod report;
 mod targets;
 mod throttle;
@@ -24,7 +28,8 @@ use self::args::{
     executor_base_config, executor_config_for_target, executor_config_from_exec, load_script,
     validate_source,
 };
-use self::discover::{bytecode_path_for_script, discover_bytecode, discover_scripts};
+use self::cmd_registry::{ScriptInput, resolve_bytecode_input, resolve_script_input};
+use self::discover::bytecode_path_for_script;
 use self::report::{
     ScanResultRecord, ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report,
     print_live_run, validate_report_options,
@@ -42,11 +47,17 @@ pub async fn run() -> process::ExitCode {
         Command::Compile(args) => cmd_compile(args, verbose),
         Command::Exec(args) => cmd_exec(args, verbose).await,
         Command::Scan(args) => cmd_scan(args, verbose).await,
+        Command::Login(args) => cmd_registry::cmd_login(args).await,
+        Command::Logout(args) => cmd_registry::cmd_logout(args),
+        Command::Whoami(args) => cmd_registry::cmd_whoami(args).await,
+        Command::Publish(args) => cmd_registry::cmd_publish(args).await,
+        Command::Install(args) => cmd_registry::cmd_install(args).await,
+        Command::Search(args) => cmd_registry::cmd_search(args).await,
     }
 }
 
 fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
-    let scripts = match discover_scripts(&args.script.script) {
+    let scripts = match self::discover::discover_scripts(Path::new(&args.script.script)) {
         Ok(scripts) => scripts,
         Err(err) => {
             ui::error(&err.to_string());
@@ -72,7 +83,7 @@ fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
 }
 
 fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
-    let scripts = match discover_scripts(&args.script.script) {
+    let scripts = match self::discover::discover_scripts(Path::new(&args.script.script)) {
         Ok(scripts) => scripts,
         Err(err) => {
             ui::error(&err.to_string());
@@ -115,10 +126,10 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
 }
 
 async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
-    let bytecode_files = match discover_bytecode(&args.bytecode) {
+    let bytecode_files = match resolve_bytecode_input(&args.bytecode, &args.registry).await {
         Ok(files) => files,
         Err(err) => {
-            ui::error(&err.to_string());
+            ui::error(&err);
             return process::ExitCode::from(1);
         }
     };
@@ -212,10 +223,10 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
 }
 
 async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
-    let scripts = match discover_scripts(&args.script.script) {
-        Ok(scripts) => scripts,
+    let input = match resolve_script_input(&args.script.script, &args.registry).await {
+        Ok(i) => i,
         Err(err) => {
-            ui::error(&err.to_string());
+            ui::error(&err);
             return process::ExitCode::from(1);
         }
     };
@@ -238,7 +249,69 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         Err(code) => return code,
     };
 
-    let script_labels: Vec<String> = scripts.iter().map(|p| p.display().to_string()).collect();
+    let prepared_scripts: Vec<PreparedScript> = match input {
+        // Compile each script once and wrap the bytecode in an Arc so
+        // multiple (target × script) iterations share the same program (and
+        // its compiled regex caches) via cheap ref-count clones rather than
+        // deep copies.
+        ScriptInput::Sources(scripts) => scripts
+            .iter()
+            .map(|script_path| {
+                let label = script_path.display().to_string();
+                match load_program(script_path) {
+                    Ok(program) => match compile_program(&program) {
+                        Ok(bytecode) => PreparedScript::Ready {
+                            label,
+                            bytecode: Arc::new(bytecode),
+                        },
+                        Err(CompileError::MissingFindingTitle) => PreparedScript::Failed {
+                            label,
+                            error: "missing `name` or `report` metadata (required when using match/evidence)".into(),
+                        },
+                    },
+                    Err(err) => PreparedScript::Failed {
+                        label,
+                        error: err.to_string(),
+                    },
+                }
+            })
+            .collect(),
+        // Registry refs and `.bc` paths bypass the compile step — they are
+        // already-validated bytecode the publish path produced (or someone
+        // ran `ruso compile` over locally). Same decode logic as cmd_exec.
+        ScriptInput::Bytecodes(bytecode_files) => {
+            let mut prepared = Vec::with_capacity(bytecode_files.len());
+            for bc_path in &bytecode_files {
+                let label = bc_path.display().to_string();
+                let bytes = match read_bytecode_file(bc_path) {
+                    Ok(b) => b,
+                    Err(err) => {
+                        prepared.push(PreparedScript::Failed { label, error: err });
+                        continue;
+                    }
+                };
+                match ruso_runtime::decode_bytecode(&bytes) {
+                    Ok(program) => prepared.push(PreparedScript::Ready {
+                        label,
+                        bytecode: Arc::new(program),
+                    }),
+                    Err(err) => prepared.push(PreparedScript::Failed {
+                        label,
+                        error: err.to_string(),
+                    }),
+                }
+            }
+            prepared
+        }
+    };
+
+    let script_labels: Vec<String> = prepared_scripts
+        .iter()
+        .map(|p| match p {
+            PreparedScript::Ready { label, .. } => label.clone(),
+            PreparedScript::Failed { label, .. } => label.clone(),
+        })
+        .collect();
     let multi_target = scan_targets.len() > 1;
 
     let mut scan_report = ScanRunReport {
@@ -251,34 +324,8 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
             skipped: 0,
             clean: 0,
         },
-        results: Vec::with_capacity(scan_targets.len() * scripts.len()),
+        results: Vec::with_capacity(scan_targets.len() * prepared_scripts.len()),
     };
-
-    // Compile each script once and wrap the bytecode in an Arc so multiple
-    // (target × script) iterations share the same program (and its compiled
-    // regex caches) via cheap ref-count clones rather than deep copies.
-    let prepared_scripts: Vec<PreparedScript> = scripts
-        .iter()
-        .map(|script_path| {
-            let label = script_path.display().to_string();
-            match load_program(script_path) {
-                Ok(program) => match compile_program(&program) {
-                    Ok(bytecode) => PreparedScript::Ready {
-                        label,
-                        bytecode: Arc::new(bytecode),
-                    },
-                    Err(CompileError::MissingFindingTitle) => PreparedScript::Failed {
-                        label,
-                        error: "missing `name` or `report` metadata (required when using match/evidence)".into(),
-                    },
-                },
-                Err(err) => PreparedScript::Failed {
-                    label,
-                    error: err.to_string(),
-                },
-            }
-        })
-        .collect();
 
     run_scan_pipeline(
         &scan_targets,
