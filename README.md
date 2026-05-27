@@ -1,5 +1,7 @@
 # ruso-cli
 
+[![Rust CI](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml)
+
 > **Development status:** This project is under active development. APIs, bytecode format, and CLI behavior may change without notice. Not recommended for production use yet.
 
 Command-line tool for Ruso checks (`ruso` binary). Runs `.ruso` scripts locally, *and* talks to a [`ruso-backend`](https://github.com/Hopeless-Labs/ruso-backend) registry instance for publishing, installing, and searching shared checks.
