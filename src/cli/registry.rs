@@ -218,6 +218,67 @@ impl RegistryClient {
         Ok(())
     }
 
+    pub async fn patch_script(
+        &self,
+        namespace: &str,
+        name: &str,
+        body: &PatchScriptRequest,
+    ) -> Result<PatchScriptResponse, RegistryError> {
+        let path = format!("/v1/scripts/{namespace}/{name}");
+        let resp = self
+            .request(reqwest::Method::PATCH, &path)
+            .json(body)
+            .send()
+            .await?;
+        Self::json_response(resp, &path).await
+    }
+
+    pub async fn yank_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+        reason: Option<&str>,
+    ) -> Result<(), RegistryError> {
+        let path = format!("/v1/scripts/{namespace}/{name}/versions/{version}/yank");
+        let mut req = self.request(reqwest::Method::POST, &path);
+        if let Some(r) = reason {
+            req = req.json(&YankRequest {
+                reason: Some(r.to_string()),
+            });
+        }
+        Self::no_content_response(req.send().await?, &path).await
+    }
+
+    pub async fn unyank_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<(), RegistryError> {
+        let path = format!("/v1/scripts/{namespace}/{name}/versions/{version}/unyank");
+        let resp = self.request(reqwest::Method::POST, &path).send().await?;
+        Self::no_content_response(resp, &path).await
+    }
+
+    /// 204-or-error helper for the yank-family endpoints. Mirrors
+    /// `json_response`'s error path but doesn't try to parse a body.
+    async fn no_content_response(resp: reqwest::Response, path: &str) -> Result<(), RegistryError> {
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(RegistryError::Unauthorized);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RegistryError::Http {
+                status: status.as_u16(),
+                path: path.to_string(),
+                body,
+            });
+        }
+        Ok(())
+    }
+
     pub async fn search(&self, params: &SearchParams) -> Result<SearchResponse, RegistryError> {
         let path = "/v1/scripts/search";
         let mut query: Vec<(&str, String)> = Vec::new();
@@ -281,7 +342,7 @@ pub struct PublishResponse {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ScriptResponse {
     pub namespace: String,
     pub name: String,
@@ -292,7 +353,7 @@ pub struct ScriptResponse {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct VersionSummary {
     pub version: String,
     pub size_bytes: i64,
@@ -300,6 +361,8 @@ pub struct VersionSummary {
     pub tags: Vec<String>,
     pub published_at: String,
     pub yanked_at: Option<String>,
+    #[serde(default)]
+    pub download_count: i64,
 }
 
 #[derive(Debug, Default, Clone, Serialize)]
@@ -319,6 +382,33 @@ pub struct SearchResponse {
     pub per_page: u32,
     pub total: i64,
     pub results: Vec<SearchHit>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PatchScriptRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<String>,
+}
+
+/// PATCH `/v1/scripts/:ns/:name` returns only the editable fields,
+/// not the full ScriptResponse (no versions). Mirrors the backend's
+/// `PatchResponse` shape.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct PatchScriptResponse {
+    pub namespace: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub visibility: String,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct YankRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[allow(dead_code)]

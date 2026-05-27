@@ -9,14 +9,15 @@ use std::process::ExitCode;
 use ruso_script::{Program, Stmt, parse};
 
 use crate::cli::args::{
-    InstallArgs, LoginArgs, PatCreateArgs, PatListArgs, PatRevokeArgs, PublishArgs, RegistryArgs,
-    RegistryOnlyArgs, SearchArgs, Visibility,
+    EditArgs, InfoArgs, InstallArgs, LoginArgs, PatCreateArgs, PatListArgs, PatRevokeArgs,
+    PublishArgs, RegistryArgs, RegistryOnlyArgs, SearchArgs, UnyankArgs, Visibility, YankArgs,
 };
 use crate::cli::credentials::{self, Credentials};
 use crate::cli::discover::{discover_bytecode, discover_scripts};
 use crate::cli::install_store::{self, InstallStore, RegistryRef, parse_ref};
 use crate::cli::registry::{
-    CreateTokenRequest, RegistryClient, RegistryError, SearchParams, TokenSummary, resolve_base_url,
+    CreateTokenRequest, PatchScriptRequest, RegistryClient, RegistryError, ScriptResponse,
+    SearchParams, TokenSummary, resolve_base_url,
 };
 use crate::cli::ui;
 
@@ -525,6 +526,191 @@ fn print_search_table(resp: &crate::cli::registry::SearchResponse) {
         "\npage {} of {} ({} results)",
         resp.page, last_page, resp.total
     );
+}
+
+// ───────────────────────────── info / yank / unyank / edit ─────────────────────────────
+
+pub async fn cmd_info(args: InfoArgs) -> ExitCode {
+    let (ns, name, range) = match parse_ns_name_optional_range(&args.r#ref) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            ui::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let base_url = resolve_base_url(args.registry.registry.as_deref());
+    let token = credentials::load(&base_url).ok().flatten().map(|c| c.token);
+    let client = match RegistryClient::new(base_url, token) {
+        Ok(c) => c,
+        Err(err) => {
+            ui::error(&err.to_string());
+            return ExitCode::from(1);
+        }
+    };
+
+    match client.show(&ns, &name, range.as_deref()).await {
+        Ok(script) => {
+            if args.json {
+                match serde_json::to_string_pretty(&script) {
+                    Ok(s) => println!("{s}"),
+                    Err(err) => {
+                        ui::error(&err.to_string());
+                        return ExitCode::from(1);
+                    }
+                }
+            } else {
+                print_info_human(&script);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_info_human(s: &ScriptResponse) {
+    println!("{}/{}", s.namespace, s.name);
+    println!("  visibility: {}", s.visibility);
+    if let Some(d) = &s.description
+        && !d.is_empty()
+    {
+        println!("  description: {d}");
+    }
+    if !s.tags.is_empty() {
+        println!("  tags: {}", s.tags.join(", "));
+    }
+    let latest = s.versions.iter().find(|v| v.yanked_at.is_none());
+    if let Some(v) = latest {
+        println!("  latest: {} ({} downloads)", v.version, v.download_count);
+        println!();
+        println!("  install:");
+        println!("    ruso install {}/{}", s.namespace, s.name);
+        println!(
+            "    ruso scan --script {}/{} --target https://example.com",
+            s.namespace, s.name
+        );
+    }
+    println!();
+    println!("  versions ({}):", s.versions.len());
+    for v in &s.versions {
+        let yank = if v.yanked_at.is_some() { " yanked" } else { "" };
+        println!(
+            "    {:<14} {:>10} downloads  {} bytes{}",
+            v.version, v.download_count, v.size_bytes, yank
+        );
+    }
+}
+
+pub async fn cmd_yank(args: YankArgs) -> ExitCode {
+    let (ns, name, version) = match parse_ns_name_version(&args.r#ref) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            ui::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    match client
+        .yank_version(&ns, &name, &version, args.reason.as_deref())
+        .await
+    {
+        Ok(()) => {
+            println!("yanked {}/{}@{}", ns, name, version);
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub async fn cmd_unyank(args: UnyankArgs) -> ExitCode {
+    let (ns, name, version) = match parse_ns_name_version(&args.r#ref) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            ui::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    match client.unyank_version(&ns, &name, &version).await {
+        Ok(()) => {
+            println!("unyanked {}/{}@{}", ns, name, version);
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub async fn cmd_edit(args: EditArgs) -> ExitCode {
+    if args.description.is_none() && args.visibility.is_none() {
+        ui::error("nothing to change — pass --description and/or --visibility");
+        return ExitCode::from(1);
+    }
+    let (ns, name, _range) = match parse_ns_name_optional_range(&args.r#ref) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            ui::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+
+    let body = PatchScriptRequest {
+        description: args.description.map(|s| s.trim().to_string()),
+        visibility: args.visibility.map(|v| visibility_str(v).to_string()),
+    };
+    match client.patch_script(&ns, &name, &body).await {
+        Ok(s) => {
+            println!("updated {}/{}", s.namespace, s.name);
+            if let Some(d) = &body.description {
+                if d.is_empty() {
+                    println!("  description: (cleared)");
+                } else {
+                    println!("  description: {d}");
+                }
+            }
+            if let Some(v) = &body.visibility {
+                println!("  visibility:  {v}");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// `<ns>/<name>[@<range>]` for read-side ops where a range filter is
+/// optional. Returns `(ns, name, range)`.
+fn parse_ns_name_optional_range(s: &str) -> Result<(String, String, Option<String>), String> {
+    let r = parse_ref(s)
+        .ok_or_else(|| format!("`{s}` is not a registry ref (expected `<ns>/<name>[@<range>]`)"))?;
+    Ok((r.namespace, r.name, r.range))
+}
+
+/// `<ns>/<name>@<version>` for yank-family ops where an exact version
+/// is required (not a range). The backend will validate SemVer.
+fn parse_ns_name_version(s: &str) -> Result<(String, String, String), String> {
+    let r = parse_ref(s)
+        .ok_or_else(|| format!("`{s}` is not a registry ref (expected `<ns>/<name>@<version>`)"))?;
+    let version = r.range.ok_or_else(|| {
+        format!("`{s}` is missing `@<version>` — yank/unyank operate on a single version")
+    })?;
+    Ok((r.namespace, r.name, version))
 }
 
 // ───────────────────────────── pat (list / create / revoke) ─────────────────────────────

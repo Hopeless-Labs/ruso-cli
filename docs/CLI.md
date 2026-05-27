@@ -268,6 +268,69 @@ Anonymous searches see only public scripts; authenticated searches
 also include private scripts owned by the caller. Scripts whose only
 versions are yanked are excluded from results.
 
+## `info`
+
+```bash
+ruso info someuser/log4shell
+ruso info someuser/log4shell@^1            # filter versions by range
+ruso info someuser/log4shell --json        # machine-readable
+```
+
+Read-only — works anonymously for public scripts, requires login for
+private scripts you own.
+
+| Flag | Effect |
+|------|--------|
+| Positional `<REF>` | `<ns>/<name>` or `<ns>/<name>@<semver-range>`. |
+| `--json` | Emit the raw `ScriptResponse` shape to stdout. |
+| `--registry <URL>` | Override the registry base URL. |
+
+Human output shows: namespace/name, visibility, description, tags, the
+latest non-yanked version + its download count, copy-paste install
+commands, and the full version list with per-version size + download
+count + yank flag.
+
+## `yank` / `unyank`
+
+```bash
+ruso yank someuser/check@1.4.2 --reason "false-positive rate too high"
+ruso unyank someuser/check@1.4.2
+```
+
+Owner-only. Idempotent — yanking an already-yanked version (or
+unyanking an already-active one) is a no-op success.
+
+| Flag | Effect |
+|------|--------|
+| Positional `<REF@VERSION>` | Exact SemVer, not a range. |
+| `--reason <TEXT>` (yank only) | Surfaced in version metadata as `yank_reason`; helps installers understand why a previously-shipping version disappeared. |
+| `--registry <URL>` | Override the registry base URL. |
+
+Yank only requires the `yank` scope on PATs. Sessions carry full scope.
+Yanked versions still serve their bytecode if explicitly requested by
+version — the registry just stops recommending them in search +
+`install` without `@<range>` matching.
+
+## `edit`
+
+```bash
+ruso edit someuser/check --description "Now detects CVE-2024-XYZ too"
+ruso edit someuser/check --visibility private
+ruso edit someuser/check --description "" --visibility public   # combo
+```
+
+Owner-only. Updates fields on the script (not on a version — version
+data is immutable once published).
+
+| Flag | Effect |
+|------|--------|
+| Positional `<REF>` | `<ns>/<name>` — no version part. |
+| `--description <TEXT>` | New description. Pass `""` to clear. |
+| `--visibility <public\|private>` | Toggle visibility. |
+| `--registry <URL>` | Override the registry base URL. |
+
+Refuses to call with neither flag set (would be a no-op round-trip).
+
 ## `pat`
 
 Personal access tokens lifecycle from the terminal — the full set of

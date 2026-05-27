@@ -61,8 +61,69 @@ pub enum Command {
     /// Search published scripts on the registry
     Search(SearchArgs),
 
+    /// Show registry metadata for a script (versions, install, tags)
+    Info(InfoArgs),
+
+    /// Yank a published version (idempotent)
+    Yank(YankArgs),
+
+    /// Reverse a previously-yanked version (idempotent)
+    Unyank(UnyankArgs),
+
+    /// Edit description / visibility of a script you own
+    Edit(EditArgs),
+
     /// Manage personal access tokens (list / create / revoke)
     Pat(PatArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct InfoArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// `<namespace>/<name>` or `<namespace>/<name>@<semver-range>`.
+    #[arg(value_name = "REF")]
+    pub r#ref: String,
+    /// Emit JSON to stdout instead of the human view.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct YankArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// `<namespace>/<name>@<version>` — exact SemVer required (no range).
+    #[arg(value_name = "REF@VERSION")]
+    pub r#ref: String,
+    /// Operator-visible explanation surfaced in version metadata
+    /// (`yank_reason`). Optional.
+    #[arg(long, value_name = "TEXT")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct UnyankArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// `<namespace>/<name>@<version>` — exact SemVer required.
+    #[arg(value_name = "REF@VERSION")]
+    pub r#ref: String,
+}
+
+#[derive(Debug, Parser)]
+pub struct EditArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// `<namespace>/<name>` — no version part.
+    #[arg(value_name = "REF")]
+    pub r#ref: String,
+    /// New description. Pass an empty string to clear.
+    #[arg(long, value_name = "TEXT")]
+    pub description: Option<String>,
+    /// New visibility — `public` or `private`.
+    #[arg(long, value_enum)]
+    pub visibility: Option<Visibility>,
 }
 
 #[derive(Debug, Parser)]
