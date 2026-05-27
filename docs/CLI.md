@@ -1,13 +1,28 @@
 # CLI (`ruso`)
 
-Binary name: **`ruso`**. Four commands only:
+Binary name: **`ruso`**. Ten commands across two groups:
+
+**Local** (no network):
 
 | Command | Purpose |
 |---------|---------|
 | `scan` | Parse, compile, and run `.ruso` against targets |
-| `validate` | Check `.ruso` syntax (no network) |
+| `validate` | Check `.ruso` syntax |
 | `compile` | Write hex-encoded bytecode to `<script>.bc` (silent on success) |
 | `exec` | Run `.bc` bytecode against targets |
+
+**Registry** (talks to [`ruso-backend`](https://github.com/Hopeless-Labs/ruso-backend)):
+
+| Command | Purpose |
+|---------|---------|
+| `login` | Save a PAT or session token for the active registry |
+| `logout` | Delete the stored credential |
+| `whoami` | Show the user the stored credential belongs to |
+| `publish` | Upload a `.ruso` script |
+| `install` | Download `<ns>/<name>[@<range>]` into the local cache |
+| `search` | Search published scripts |
+
+Plus: `scan` and `exec` accept `<ns>/<name>[@<range>]` registry refs in `--script` / `--bytecode` and resolve them through the local cache (auto-installing on miss).
 
 ## Build
 
@@ -23,6 +38,46 @@ cargo build --release
 | `-q` / `--quiet` | Less logging |
 | `-v` / `--verbose` | More logging; live `detected` / `no` lines during scan/exec |
 | `RUST_LOG` | Overrides default filter |
+
+## Registry URL resolution
+
+Every command that talks to a backend resolves the registry base URL in
+this order:
+
+1. `--registry <URL>` flag on the command
+2. `RUSO_REGISTRY_URL` environment variable
+3. Built-in default `http://127.0.0.1:8080` (placeholder until a hosted
+   instance lands)
+
+Credentials are stored per registry base URL in
+`$XDG_CONFIG_HOME/ruso/credentials.json` (Linux/macOS) or
+`%APPDATA%\ruso\credentials.json` (Windows), mode `0600` on Unix. The
+same machine can be logged into multiple registries at once.
+
+## Registry refs
+
+A *registry ref* is a string of the form `<namespace>/<name>[@<range>]`:
+
+- `<namespace>` and `<name>` follow the slug rule
+  `^[a-z0-9][a-z0-9-]{0,38}$`.
+- `<range>` is an optional [SemVer
+  range](https://docs.rs/semver/1/semver/struct.VersionReq.html) like
+  `^1.2`, `>=0.3,<0.5`, or `=1.0.0`.
+
+Refs are accepted wherever the CLI takes a script/bytecode path:
+
+- `ruso install <ref>…`
+- `ruso scan --script <ref>` / `ruso exec --bytecode <ref>`
+
+Resolution rule for `scan` / `exec`:
+
+1. If the argument exists on the filesystem → treat as a path.
+   (Local files always win, so a directory named `myorg/check` still
+   works.)
+2. Else if it parses as a registry ref → resolve through the install
+   cache (`$RUSO_HOME` or `$HOME/.ruso/scripts/<ns>/<name>/<version>.bc`),
+   downloading from the registry on cache miss.
+3. Else → error.
 
 ## `validate`
 
@@ -54,12 +109,15 @@ ruso compile --script ./checks/
 ```bash
 ruso exec --bytecode check.bc --target https://example.com
 ruso exec --bytecode ./built/ --target targets.txt -v
+# Registry ref — auto-fetches if not cached.
+ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--bytecode` | `.bc` file or directory of `.bc` files (hex from `compile`) |
+| `--bytecode` | `.bc` file, directory of `.bc` files, or registry ref `<ns>/<name>[@<range>]` |
 | `--target` | URL or file (one URL per line) |
+| `--registry <URL>` | Override the registry base URL (only consulted for ref inputs) |
 | `--timeout` | Default `30s` |
 | `--read-timeout` | Per-read I/O timeout for socket probes (default `10s`) |
 | `--max-response-bytes` | HTTP body cap (default 10 MiB) |
@@ -93,9 +151,122 @@ Endpoints:
 ```bash
 ruso scan --script check.ruso --target https://example.com
 ruso scan --script ./checks/ --target targets.txt --output json --report out.json
+# Registry ref — auto-fetches if not cached.
+ruso scan --script myorg/log4shell@^0.2 --target https://lab.local -v
 ```
 
-Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file). Each script is parsed and compiled once, then bytecode is reused for every target.
+Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file). Each local script is parsed and compiled once, then bytecode is reused for every target. Registry-ref inputs skip the compile step — they are served as already-compiled bytecode from the cache and go through the same decode-and-run path as `exec`.
+
+`--script` also accepts a `--registry <URL>` override for ref resolution.
+
+## `login`
+
+```bash
+ruso login --token ruso_pat_xxxxxxxxxxxx
+# Or read from stdin:
+echo "ruso_pat_xxxxxxxxxxxx" | ruso login
+# Interactive prompt if stdin is a tty:
+ruso login
+```
+
+Verifies the token against the registry's `/v1/me` endpoint before
+saving — better to fail loudly here than silently store a bad token.
+
+| Flag | Effect |
+|------|--------|
+| `--token <TOKEN>` | PAT (`ruso_pat_…`) or session token (`ruso_sess_…`). |
+| `--registry <URL>` | Override the registry base URL. |
+
+## `logout`
+
+```bash
+ruso logout
+ruso logout --registry https://other.example.com
+```
+
+Removes the stored credential for the active registry. Idempotent.
+
+## `whoami`
+
+```bash
+ruso whoami
+```
+
+Prints the user the stored credential resolves to, plus the registry
+URL the credential is bound to. Exits non-zero if no credential is
+stored.
+
+## `publish`
+
+```bash
+ruso publish ./mycheck.ruso
+ruso publish ./mycheck.ruso --visibility private
+ruso publish ./mycheck.ruso --namespace shared-org   # override default ns
+```
+
+| Flag | Effect |
+|------|--------|
+| `--visibility <public\|private>` | First-publish-only. Subsequent publishes inherit the existing visibility (change via `PATCH` — not yet exposed in the CLI). |
+| `--namespace <NAME>` | Override the auto-derived namespace. Defaults to your username from `/v1/me`. |
+| `--registry <URL>` | Override the registry base URL. |
+
+The script's `name "…"` metadata is slugified to form the URL path
+component. `version "X.Y.Z"` and (optional) `tags [...]` metadata are
+extracted from the `.ruso` source by the backend at publish time —
+both fields are immutable per version.
+
+Success output:
+
+```
+published myuser/log4shell@0.2.0 (4321 bytes, public)
+tags:     log4j, rce, jndi
+```
+
+## `install`
+
+```bash
+ruso install someuser/log4shell
+ruso install someuser/log4shell@^0.2
+ruso install --all-versions someuser/log4shell
+ruso install --force someuser/log4shell                 # re-download
+ruso install a/x b/y c/z@~1.4                            # multiple refs
+```
+
+Resolves the best non-yanked version matching the range (newest wins;
+no range = newest overall) and writes it to
+`$RUSO_HOME/scripts/<ns>/<name>/<version>.bc` (default
+`~/.ruso/scripts/...`). Subsequent runs reuse the cache.
+
+| Flag | Effect |
+|------|--------|
+| `--force` | Re-download even if a matching version is already cached. Bust the cache for these refs first. |
+| `--all-versions` | Install every non-yanked version of the ref (honouring `@<range>` if given). Newest-first so Ctrl-C mid-install leaves the most-useful versions on disk. |
+| `--registry <URL>` | Override the registry base URL. |
+
+## `search`
+
+```bash
+ruso search "log4j"
+ruso search --tag rce --tag auth          # AND on tags
+ruso search --severity critical --cve CVE-2021-44228
+ruso search --namespace someuser
+ruso search "log4j" --json --per-page 50  # machine-readable
+```
+
+| Flag | Effect |
+|------|--------|
+| Positional `<QUERY>` | Free-text query (matches name + description + tags via tsvector). |
+| `--tag <T>` | Filter by tag. Repeat for AND. |
+| `--severity <S>` | Exact match on the latest version's severity. |
+| `--cve <ID>` | Exact match on a CVE in the cached list. |
+| `--namespace <NS>` | Filter by owner username. |
+| `--page <N>` / `--per-page <N>` | Defaults `1` / `20`; `per-page` clamped to `[1, 100]`. |
+| `--json` | Emit a JSON array of hits to stdout (table view by default). |
+| `--registry <URL>` | Override the registry base URL. |
+
+Anonymous searches see only public scripts; authenticated searches
+also include private scripts owned by the caller. Scripts whose only
+versions are yanked are excluded from results.
 
 ## Report output (`--output json` / `csv` / `human`)
 
@@ -137,12 +308,19 @@ downstream tooling. The CSV header now includes `skipped` and
 ## Workflow
 
 ```bash
+# Local development loop.
 ruso validate --script mycheck.ruso
 ruso compile --script mycheck.ruso          # → mycheck.bc
 ruso exec --bytecode mycheck.bc --target https://lab.local -v
 
 # Or one step from source:
 ruso scan --script mycheck.ruso --target https://lab.local -v
+
+# Publish a finished check and run someone else's:
+echo "$RUSO_PAT" | ruso login --registry https://registry.example.com
+ruso publish ./mycheck.ruso --visibility public
+ruso install someone/another-check@^1
+ruso scan --script someone/another-check --target https://lab.local -v
 ```
 
 ## Exit codes
