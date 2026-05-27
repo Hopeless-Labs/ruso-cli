@@ -190,7 +190,9 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
                 return process::ExitCode::from(1);
             }
         };
-        prepared_bytecode.push((bc_path.display().to_string(), Arc::new(program)));
+        let label =
+            install_store::pretty_label(bc_path).unwrap_or_else(|| bc_path.display().to_string());
+        prepared_bytecode.push((label, Arc::new(program)));
     }
 
     let prepared_scripts: Vec<PreparedScript> = prepared_bytecode
@@ -282,7 +284,8 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         ScriptInput::Bytecodes(bytecode_files) => {
             let mut prepared = Vec::with_capacity(bytecode_files.len());
             for bc_path in &bytecode_files {
-                let label = bc_path.display().to_string();
+                let label = install_store::pretty_label(bc_path)
+                    .unwrap_or_else(|| bc_path.display().to_string());
                 let bytes = match read_bytecode_file(bc_path) {
                     Ok(b) => b,
                     Err(err) => {

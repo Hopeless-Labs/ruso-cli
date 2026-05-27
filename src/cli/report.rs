@@ -426,6 +426,12 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
 }
 
 fn script_label(script: &str) -> String {
+    // Registry refs (`ns/name@version`) and other already-friendly labels
+    // shouldn't get path-style basename trimming — `file_name()` on
+    // `teodhor87/log4shell@0.2.0` would drop the namespace.
+    if script.contains('@') {
+        return script.to_string();
+    }
     PathBuf::from(script)
         .file_name()
         .and_then(|n| n.to_str())

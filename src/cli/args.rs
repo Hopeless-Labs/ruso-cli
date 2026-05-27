@@ -132,6 +132,11 @@ pub struct InstallArgs {
     /// Re-download even if a matching version is already cached.
     #[arg(long)]
     pub force: bool,
+    /// Install every non-yanked version (within the supplied range, if any).
+    /// Useful for mirroring a script's full history to a workstation that
+    /// may need to scan against several pinned versions later.
+    #[arg(long)]
+    pub all_versions: bool,
 }
 
 #[derive(Debug, Parser)]

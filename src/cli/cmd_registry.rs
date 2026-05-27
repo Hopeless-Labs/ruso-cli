@@ -340,19 +340,47 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
                 continue;
             }
         }
-        match install_store::install(&store, &client, &r#ref).await {
-            Ok((version, path)) => {
-                println!(
-                    "installed {}/{} @ {} -> {}",
-                    r#ref.namespace,
-                    r#ref.name,
-                    version,
-                    path.display()
-                );
+        if args.all_versions {
+            match install_all_versions(&store, &client, &r#ref).await {
+                Ok(installed) => {
+                    if installed.is_empty() {
+                        ui::error(&format!(
+                            "no non-yanked versions of {} match {}",
+                            r#ref.display(),
+                            r#ref.range.as_deref().unwrap_or("*"),
+                        ));
+                        had_error = true;
+                    }
+                    for (version, path) in installed {
+                        println!(
+                            "installed {}/{} @ {} -> {}",
+                            r#ref.namespace,
+                            r#ref.name,
+                            version,
+                            path.display()
+                        );
+                    }
+                }
+                Err(err) => {
+                    ui::error(&format!("install {}: {err}", r#ref.display()));
+                    had_error = true;
+                }
             }
-            Err(err) => {
-                ui::error(&format!("install {}: {err}", r#ref.display()));
-                had_error = true;
+        } else {
+            match install_store::install(&store, &client, &r#ref).await {
+                Ok((version, path)) => {
+                    println!(
+                        "installed {}/{} @ {} -> {}",
+                        r#ref.namespace,
+                        r#ref.name,
+                        version,
+                        path.display()
+                    );
+                }
+                Err(err) => {
+                    ui::error(&format!("install {}: {err}", r#ref.display()));
+                    had_error = true;
+                }
             }
         }
     }
@@ -361,6 +389,56 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Fetch every non-yanked version of `ref` that matches its range (or all,
+/// if the ref has no range) and write them to the cache. Returns the list
+/// of `(version, path)` it materialised — already-cached versions count
+/// too, since the caller cares about "what's installed now."
+async fn install_all_versions(
+    store: &InstallStore,
+    client: &RegistryClient,
+    r#ref: &RegistryRef,
+) -> Result<Vec<(semver::Version, std::path::PathBuf)>, String> {
+    let script = client
+        .show(&r#ref.namespace, &r#ref.name, r#ref.range.as_deref())
+        .await
+        .map_err(|e| e.to_string())?;
+    let req = match r#ref.range.as_deref() {
+        None => None,
+        Some(r) => Some(
+            semver::VersionReq::parse(r).map_err(|e| format!("invalid SemVer range `{r}`: {e}"))?,
+        ),
+    };
+    let mut candidates: Vec<semver::Version> = script
+        .versions
+        .iter()
+        .filter(|v| v.yanked_at.is_none())
+        .filter_map(|v| semver::Version::parse(&v.version).ok())
+        .filter(|v| req.as_ref().is_none_or(|r| r.matches(v)))
+        .collect();
+    // Newest first so cancellation mid-stream leaves the most-useful
+    // versions behind.
+    candidates.sort_by(|a, b| b.cmp(a));
+
+    let mut out = Vec::with_capacity(candidates.len());
+    for v in candidates {
+        let version_str = v.to_string();
+        let cached = store.bytecode_path(&r#ref.namespace, &r#ref.name, &version_str);
+        let path = if cached.exists() {
+            cached
+        } else {
+            let bytes = client
+                .download_bytecode(&r#ref.namespace, &r#ref.name, &version_str)
+                .await
+                .map_err(|e| e.to_string())?;
+            store
+                .write_bytecode(&r#ref.namespace, &r#ref.name, &version_str, &bytes)
+                .map_err(|e| e.to_string())?
+        };
+        out.push((v, path));
+    }
+    Ok(out)
 }
 
 fn clear_cached(store: &InstallStore, r#ref: &RegistryRef) -> Result<(), io::Error> {

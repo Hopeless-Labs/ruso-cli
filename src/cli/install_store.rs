@@ -8,7 +8,7 @@
 //! local satisfies it.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use semver::{Version, VersionReq};
 use thiserror::Error;
@@ -193,6 +193,32 @@ impl InstallStore {
         })?;
         Ok(path)
     }
+}
+
+/// If `path` looks like a file under the install cache
+/// (`…/scripts/<ns>/<name>/<version>.bc`), reconstruct a friendly
+/// `ns/name@version` label. Returns `None` for paths that don't match
+/// the layout so callers fall back to the raw path.
+pub fn pretty_label(path: &Path) -> Option<String> {
+    let version = path.file_stem()?.to_str()?;
+    if path.extension().and_then(|e| e.to_str()) != Some("bc") {
+        return None;
+    }
+    if Version::parse(version).is_err() {
+        return None;
+    }
+    let name_dir = path.parent()?;
+    let name = name_dir.file_name()?.to_str()?;
+    let ns_dir = name_dir.parent()?;
+    let namespace = ns_dir.file_name()?.to_str()?;
+    let scripts_dir = ns_dir.parent()?;
+    if scripts_dir.file_name()?.to_str()? != "scripts" {
+        return None;
+    }
+    if !is_slug(namespace) || !is_slug(name) {
+        return None;
+    }
+    Some(format!("{namespace}/{name}@{version}"))
 }
 
 /// Pick the best locally-installed version that matches `range` (or the
