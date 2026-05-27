@@ -53,6 +53,11 @@ pub async fn run() -> process::ExitCode {
         Command::Publish(args) => cmd_registry::cmd_publish(args).await,
         Command::Install(args) => cmd_registry::cmd_install(args).await,
         Command::Search(args) => cmd_registry::cmd_search(args).await,
+        Command::Pat(args) => match args.action {
+            args::PatCommand::List(a) => cmd_registry::cmd_pat_list(a).await,
+            args::PatCommand::Create(a) => cmd_registry::cmd_pat_create(a).await,
+            args::PatCommand::Revoke(a) => cmd_registry::cmd_pat_revoke(a).await,
+        },
     }
 }
 

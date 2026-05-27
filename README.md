@@ -27,6 +27,7 @@ Command-line tool for Ruso checks (`ruso` binary). Runs `.ruso` scripts locally,
 | `publish` | Upload a `.ruso` script to the registry |
 | `install` | Download `<namespace>/<name>[@<range>]` into the local cache |
 | `search` | Search published scripts (free-text + tag/severity/cve/namespace filters) |
+| `pat list/create/revoke` | Manage PATs from the terminal — full lifecycle without the web UI |
 
 Plus: `ruso scan --script <namespace>/<name>[@<range>]` resolves a registry reference through the local cache, fetching from the registry on miss. Same for `ruso exec --bytecode <namespace>/<name>[@<range>]`. Filesystem paths always win over ref pattern matching, so a local file/directory named like a slug still works.
 

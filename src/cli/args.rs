@@ -60,6 +60,65 @@ pub enum Command {
 
     /// Search published scripts on the registry
     Search(SearchArgs),
+
+    /// Manage personal access tokens (list / create / revoke)
+    Pat(PatArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct PatArgs {
+    #[command(subcommand)]
+    pub action: PatCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PatCommand {
+    /// List your PATs (active + revoked).
+    List(PatListArgs),
+    /// Mint a new PAT. The plaintext is printed once — store it now.
+    Create(PatCreateArgs),
+    /// Revoke a PAT by id.
+    Revoke(PatRevokeArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct PatListArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// Hide already-revoked tokens (default shows them with a marker).
+    #[arg(long)]
+    pub active_only: bool,
+    /// Emit JSON to stdout instead of the table view.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct PatCreateArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// Human label so you remember what the token is for (e.g. `laptop`,
+    /// `ci`). Stored verbatim.
+    #[arg(value_name = "NAME")]
+    pub name: String,
+    /// Scope(s) to grant. Repeat for multiple (e.g. `--scope read
+    /// --scope publish`). Defaults to `read` if not specified. Allowed
+    /// values: `read`, `publish`, `yank`.
+    #[arg(long, value_name = "SCOPE")]
+    pub scope: Vec<String>,
+    /// Optional expiry as an RFC 3339 timestamp (`2026-12-31T00:00:00Z`).
+    /// Omit for a never-expiring token (still revocable).
+    #[arg(long, value_name = "RFC3339")]
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Parser)]
+pub struct PatRevokeArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// PAT id (UUID). Get it from `ruso pat list`.
+    #[arg(value_name = "ID")]
+    pub id: String,
 }
 
 #[derive(Debug, Parser)]

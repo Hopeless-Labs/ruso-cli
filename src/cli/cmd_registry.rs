@@ -9,12 +9,15 @@ use std::process::ExitCode;
 use ruso_script::{Program, Stmt, parse};
 
 use crate::cli::args::{
-    InstallArgs, LoginArgs, PublishArgs, RegistryArgs, RegistryOnlyArgs, SearchArgs, Visibility,
+    InstallArgs, LoginArgs, PatCreateArgs, PatListArgs, PatRevokeArgs, PublishArgs, RegistryArgs,
+    RegistryOnlyArgs, SearchArgs, Visibility,
 };
 use crate::cli::credentials::{self, Credentials};
 use crate::cli::discover::{discover_bytecode, discover_scripts};
 use crate::cli::install_store::{self, InstallStore, RegistryRef, parse_ref};
-use crate::cli::registry::{RegistryClient, RegistryError, SearchParams, resolve_base_url};
+use crate::cli::registry::{
+    CreateTokenRequest, RegistryClient, RegistryError, SearchParams, TokenSummary, resolve_base_url,
+};
 use crate::cli::ui;
 
 // ───────────────────────────── login / logout / whoami ─────────────────────────────
@@ -522,6 +525,201 @@ fn print_search_table(resp: &crate::cli::registry::SearchResponse) {
         "\npage {} of {} ({} results)",
         resp.page, last_page, resp.total
     );
+}
+
+// ───────────────────────────── pat (list / create / revoke) ─────────────────────────────
+
+const ALLOWED_SCOPES: &[&str] = &["read", "publish", "yank"];
+
+pub async fn cmd_pat_list(args: PatListArgs) -> ExitCode {
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    match client.list_tokens().await {
+        Ok(mut tokens) => {
+            if args.active_only {
+                tokens.retain(|t| t.revoked_at.is_none());
+            }
+            // Newest-first so the latest mint is at the top — that's
+            // typically what you just created and want to copy the id of.
+            tokens.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+            if args.json {
+                #[derive(serde::Serialize)]
+                struct WireToken<'a> {
+                    id: &'a str,
+                    name: &'a str,
+                    scopes: &'a [String],
+                    expires_at: Option<&'a str>,
+                    created_at: &'a str,
+                    last_used_at: Option<&'a str>,
+                    revoked_at: Option<&'a str>,
+                }
+                let wire: Vec<_> = tokens
+                    .iter()
+                    .map(|t| WireToken {
+                        id: &t.id,
+                        name: &t.name,
+                        scopes: &t.scopes,
+                        expires_at: t.expires_at.as_deref(),
+                        created_at: &t.created_at,
+                        last_used_at: t.last_used_at.as_deref(),
+                        revoked_at: t.revoked_at.as_deref(),
+                    })
+                    .collect();
+                match serde_json::to_string_pretty(&wire) {
+                    Ok(s) => println!("{s}"),
+                    Err(err) => {
+                        ui::error(&err.to_string());
+                        return ExitCode::from(1);
+                    }
+                }
+            } else {
+                print_pat_table(&tokens);
+            }
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub async fn cmd_pat_create(args: PatCreateArgs) -> ExitCode {
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    let name = args.name.trim().to_string();
+    if name.is_empty() {
+        ui::error("token name must not be empty");
+        return ExitCode::from(1);
+    }
+    // Empty `--scope` defaults to `read` — most CLI users only want to
+    // install, not publish/yank.
+    let scopes: Vec<String> = if args.scope.is_empty() {
+        vec!["read".to_string()]
+    } else {
+        let mut out = Vec::with_capacity(args.scope.len());
+        for s in args.scope {
+            let s = s.trim().to_lowercase();
+            if !ALLOWED_SCOPES.contains(&s.as_str()) {
+                ui::error(&format!(
+                    "unknown scope `{s}` (allowed: {})",
+                    ALLOWED_SCOPES.join(", ")
+                ));
+                return ExitCode::from(1);
+            }
+            if !out.contains(&s) {
+                out.push(s);
+            }
+        }
+        out
+    };
+
+    let req = CreateTokenRequest {
+        name: name.clone(),
+        scopes: scopes.clone(),
+        expires_at: args.expires_at,
+    };
+    match client.create_token(&req).await {
+        Ok(resp) => {
+            println!(
+                "created PAT `{}` (id {}, scopes: {})",
+                resp.name,
+                resp.id,
+                resp.scopes.join(", ")
+            );
+            println!();
+            println!("Store this token now — it won't be shown again:");
+            println!("  {}", resp.token);
+            ExitCode::SUCCESS
+        }
+        Err(RegistryError::Http { status: 403, .. }) => {
+            // Backend reserves `create` to session-auth only — a PAT
+            // can't mint another PAT (would let a leaked token spawn
+            // siblings). The active stored credential is presumably
+            // a PAT; tell the user how to recover.
+            ui::error(
+                "minting a new PAT requires a session token (ruso_sess_…) — the \
+                 stored credential looks like a PAT. Sign in via the web UI \
+                 (Tokens page), or run `ruso login` with a session token.",
+            );
+            ExitCode::from(1)
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub async fn cmd_pat_revoke(args: PatRevokeArgs) -> ExitCode {
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    match client.revoke_token(&args.id).await {
+        Ok(()) => {
+            println!("revoked {}", args.id);
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Common preamble for the three pat handlers: resolve registry,
+/// require a stored credential, build a client. Returns `None` on any
+/// failure (after printing the error) so the caller can short-circuit.
+async fn require_authed_client(registry: &RegistryArgs) -> Option<RegistryClient> {
+    let base_url = resolve_base_url(registry.registry.as_deref());
+    let creds = match credentials::require(&base_url) {
+        Ok(c) => c,
+        Err(err) => {
+            ui::error(&err.to_string());
+            return None;
+        }
+    };
+    match RegistryClient::new(base_url, Some(creds.token)) {
+        Ok(c) => Some(c),
+        Err(err) => {
+            ui::error(&err.to_string());
+            None
+        }
+    }
+}
+
+fn print_pat_table(tokens: &[TokenSummary]) {
+    if tokens.is_empty() {
+        println!("no tokens");
+        return;
+    }
+    println!("{:<38} {:<20} {:<22} STATUS", "ID", "NAME", "SCOPES");
+    for t in tokens {
+        let status = match (&t.revoked_at, &t.expires_at) {
+            (Some(_), _) => "revoked".to_string(),
+            (None, Some(exp)) => format!("expires {}", exp.split('T').next().unwrap_or(exp)),
+            (None, None) => "active".to_string(),
+        };
+        println!(
+            "{:<38} {:<20} {:<22} {}",
+            t.id,
+            truncate(&t.name, 20),
+            truncate(&t.scopes.join(","), 22),
+            status,
+        );
+    }
+}
+
+fn truncate(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(n.saturating_sub(1)).collect();
+        out.push('…');
+        out
+    }
 }
 
 // ───────────────────────────── shared script resolver ─────────────────────────────

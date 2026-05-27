@@ -181,6 +181,43 @@ impl RegistryClient {
         Ok(resp.bytes().await?.to_vec())
     }
 
+    pub async fn list_tokens(&self) -> Result<Vec<TokenSummary>, RegistryError> {
+        let path = "/v1/tokens";
+        let resp = self.request(reqwest::Method::GET, path).send().await?;
+        Self::json_response(resp, path).await
+    }
+
+    pub async fn create_token(
+        &self,
+        body: &CreateTokenRequest,
+    ) -> Result<TokenCreatedResponse, RegistryError> {
+        let path = "/v1/tokens";
+        let resp = self
+            .request(reqwest::Method::POST, path)
+            .json(body)
+            .send()
+            .await?;
+        Self::json_response(resp, path).await
+    }
+
+    pub async fn revoke_token(&self, id: &str) -> Result<(), RegistryError> {
+        let path = format!("/v1/tokens/{id}");
+        let resp = self.request(reqwest::Method::DELETE, &path).send().await?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(RegistryError::Unauthorized);
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(RegistryError::Http {
+                status: status.as_u16(),
+                path,
+                body,
+            });
+        }
+        Ok(())
+    }
+
     pub async fn search(&self, params: &SearchParams) -> Result<SearchResponse, RegistryError> {
         let path = "/v1/scripts/search";
         let mut query: Vec<(&str, String)> = Vec::new();
@@ -282,6 +319,37 @@ pub struct SearchResponse {
     pub per_page: u32,
     pub total: i64,
     pub results: Vec<SearchHit>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenSummary {
+    pub id: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub last_used_at: Option<String>,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateTokenRequest {
+    pub name: String,
+    pub scopes: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
+pub struct TokenCreatedResponse {
+    pub id: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<String>,
+    /// Only returned once — the plaintext to hand to the user.
+    pub token: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

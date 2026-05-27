@@ -268,6 +268,69 @@ Anonymous searches see only public scripts; authenticated searches
 also include private scripts owned by the caller. Scripts whose only
 versions are yanked are excluded from results.
 
+## `pat`
+
+Personal access tokens lifecycle from the terminal — the full set of
+operations the web UI's Tokens page exposes.
+
+```bash
+ruso pat list                                       # table view
+ruso pat list --active-only --json                  # filter + JSON
+ruso pat create laptop                              # default scope: read
+ruso pat create ci --scope read --scope publish
+ruso pat create release --scope yank \
+                       --expires-at 2026-12-31T00:00:00Z
+ruso pat revoke <PAT_UUID>
+```
+
+All three subcommands need a stored credential (`ruso login` first).
+Backend re-checks ownership — you can only see / mutate your own
+PATs.
+
+### `pat list`
+
+| Flag | Effect |
+|------|--------|
+| `--active-only` | Hide revoked tokens. By default they're shown with a `revoked` status marker so you can audit what's been cleaned up. |
+| `--json` | Machine-readable output (array of token records). |
+| `--registry <URL>` | Override the registry base URL. |
+
+Sorted newest-first by `created_at`. The plaintext token is never
+shown — only `pat create` returns that, and only once.
+
+### `pat create`
+
+> **Requires a session token, not a PAT.** Backend deliberately
+> rejects PAT-authed `create` calls — a leaked PAT shouldn't be able
+> to mint sibling PATs. Sign in via the web UI's Tokens page, grab
+> the `ruso_sess_…` cookie, and `ruso login` with that to use this
+> command. `pat list` and `pat revoke` work with either token type.
+
+| Flag | Effect |
+|------|--------|
+| Positional `<NAME>` | Human label so you remember what the token is for. Stored verbatim. |
+| `--scope <SCOPE>` | Repeatable. Allowed: `read`, `publish`, `yank`. Defaults to `read` if not specified. Pick the minimum needed for the job. |
+| `--expires-at <RFC3339>` | Optional. Omit for a never-expiring token (still revocable via `pat revoke`). |
+| `--registry <URL>` | Override the registry base URL. |
+
+Output:
+
+```
+created PAT `laptop` (id 0a35…, scopes: read)
+
+Store this token now — it won't be shown again:
+  ruso_pat_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### `pat revoke`
+
+| Flag | Effect |
+|------|--------|
+| Positional `<ID>` | PAT UUID, copy from `pat list`. |
+| `--registry <URL>` | Override the registry base URL. |
+
+Idempotent — already-revoked tokens still return success.
+
 ## Report output (`--output json` / `csv` / `human`)
 
 Findings include check metadata from the script `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`, `author`, and `evidence`, positive rows may include:
