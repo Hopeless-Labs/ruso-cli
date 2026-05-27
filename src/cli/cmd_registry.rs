@@ -169,7 +169,10 @@ pub async fn cmd_publish(args: PublishArgs) -> ExitCode {
     let source_text = match std::str::from_utf8(&source) {
         Ok(s) => s,
         Err(err) => {
-            ui::error(&format!("{} is not valid UTF-8: {err}", args.path.display()));
+            ui::error(&format!(
+                "{} is not valid UTF-8: {err}",
+                args.path.display()
+            ));
             return ExitCode::from(1);
         }
     };
@@ -217,10 +220,7 @@ pub async fn cmd_publish(args: PublishArgs) -> ExitCode {
 
     let visibility = args.visibility.map(visibility_str);
 
-    match client
-        .publish(&namespace, &name, source, visibility)
-        .await
-    {
+    match client.publish(&namespace, &name, source, visibility).await {
         Ok(resp) => {
             println!(
                 "published {}/{}@{} ({} bytes, {})",
@@ -530,8 +530,7 @@ async fn resolve_registry_ref(
 ) -> Result<PathBuf, String> {
     let base_url = resolve_base_url(registry.registry.as_deref());
     let token = credentials::load(&base_url).ok().flatten().map(|c| c.token);
-    let client =
-        RegistryClient::new(base_url, token).map_err(|e: RegistryError| e.to_string())?;
+    let client = RegistryClient::new(base_url, token).map_err(|e: RegistryError| e.to_string())?;
     let store = InstallStore::default_for_user().map_err(|e| e.to_string())?;
     install_store::resolve_to_path(&store, &client, r#ref)
         .await

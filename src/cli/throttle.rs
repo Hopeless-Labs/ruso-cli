@@ -187,7 +187,10 @@ mod tests {
         let _a = t.acquire("host-a").await;
         // A second acquire for `host-b` must not block on `host-a`'s permit.
         let acquired = tokio::time::timeout(Duration::from_millis(50), t.acquire("host-b")).await;
-        assert!(acquired.is_ok(), "distinct hosts must not share a semaphore");
+        assert!(
+            acquired.is_ok(),
+            "distinct hosts must not share a semaphore"
+        );
     }
 
     #[tokio::test]

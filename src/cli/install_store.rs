@@ -139,7 +139,11 @@ impl InstallStore {
 
     /// All installed versions of `<ns>/<name>` in semver order (newest first).
     /// Silently skips files with names that don't parse as SemVer.
-    pub fn list_installed(&self, namespace: &str, name: &str) -> Result<Vec<Version>, InstallError> {
+    pub fn list_installed(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Vec<Version>, InstallError> {
         let dir = self.script_dir(namespace, name);
         if !dir.exists() {
             return Ok(Vec::new());
@@ -234,7 +238,9 @@ pub async fn install(
     client: &RegistryClient,
     r#ref: &RegistryRef,
 ) -> Result<(Version, PathBuf), InstallError> {
-    if let Some(local) = best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())? {
+    if let Some(local) =
+        best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())?
+    {
         let path = store.bytecode_path(&r#ref.namespace, &r#ref.name, &local.to_string());
         if path.exists() {
             return Ok((local, path));
@@ -256,11 +262,12 @@ pub async fn install(
         .collect();
     candidates.sort_by(|a, b| b.cmp(a));
 
-    let pick = pick_match(&candidates, req.as_ref()).ok_or_else(|| InstallError::NoMatchingVersion {
-        namespace: r#ref.namespace.clone(),
-        name: r#ref.name.clone(),
-        range: r#ref.range.clone().unwrap_or_else(|| "*".to_string()),
-    })?;
+    let pick =
+        pick_match(&candidates, req.as_ref()).ok_or_else(|| InstallError::NoMatchingVersion {
+            namespace: r#ref.namespace.clone(),
+            name: r#ref.name.clone(),
+            range: r#ref.range.clone().unwrap_or_else(|| "*".to_string()),
+        })?;
 
     let bytes = client
         .download_bytecode(&r#ref.namespace, &r#ref.name, &pick.to_string())
