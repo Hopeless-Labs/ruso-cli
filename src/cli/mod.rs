@@ -234,11 +234,31 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
 }
 
 async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
-    let input = match resolve_script_input(&args.script.script, &args.registry).await {
-        Ok(i) => i,
-        Err(err) => {
-            ui::error(&err);
+    // Exactly one of --script / --family selects what to run.
+    let input = match (&args.script, &args.family) {
+        (Some(_), Some(_)) => {
+            ui::error("--script and --family are mutually exclusive; pass only one");
             return process::ExitCode::from(1);
+        }
+        (None, None) => {
+            ui::error("nothing to scan: pass --script <path|ref> or --family <name>");
+            return process::ExitCode::from(1);
+        }
+        (Some(script), None) => match resolve_script_input(script, &args.registry).await {
+            Ok(i) => i,
+            Err(err) => {
+                ui::error(&err);
+                return process::ExitCode::from(1);
+            }
+        },
+        (None, Some(family)) => {
+            match cmd_registry::resolve_family_to_bytecodes(family, &args.registry).await {
+                Ok(paths) => ScriptInput::Bytecodes(paths),
+                Err(err) => {
+                    ui::error(&err);
+                    return process::ExitCode::from(1);
+                }
+            }
         }
     };
 

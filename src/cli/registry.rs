@@ -294,6 +294,9 @@ impl RegistryClient {
         if let Some(ns) = &params.namespace {
             query.push(("namespace", ns.clone()));
         }
+        if let Some(fam) = &params.family {
+            query.push(("family", fam.clone()));
+        }
         for tag in &params.tags {
             query.push(("tag", tag.clone()));
         }
@@ -349,6 +352,8 @@ pub struct ScriptResponse {
     pub description: Option<String>,
     pub visibility: String,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub family: Option<String>,
     pub versions: Vec<VersionSummary>,
 }
 
@@ -371,6 +376,7 @@ pub struct SearchParams {
     pub severity: Option<String>,
     pub cve: Option<String>,
     pub namespace: Option<String>,
+    pub family: Option<String>,
     pub tags: Vec<String>,
     pub page: Option<u32>,
     pub per_page: Option<u32>,
@@ -451,6 +457,8 @@ pub struct SearchHit {
     pub severity: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub family: Option<String>,
     #[serde(default)]
     pub cves: Vec<String>,
     pub updated_at: String,

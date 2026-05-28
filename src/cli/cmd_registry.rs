@@ -478,6 +478,7 @@ pub async fn cmd_search(args: SearchArgs) -> ExitCode {
         severity: args.severity,
         cve: args.cve,
         namespace: args.namespace,
+        family: args.family,
         tags: args.tag,
         page: Some(args.page),
         per_page: Some(args.per_page),
@@ -510,16 +511,23 @@ fn print_search_table(resp: &crate::cli::registry::SearchResponse) {
         println!("no matches (page {} of total {})", resp.page, resp.total);
         return;
     }
-    println!("{:<40} {:<10} {:<10} TAGS", "SCRIPT", "VIS", "SEVERITY");
+    println!(
+        "{:<40} {:<10} {:<10} {:<10} TAGS",
+        "SCRIPT", "VIS", "SEVERITY", "FAMILY"
+    );
     for hit in &resp.results {
         let id = format!("{}/{}", hit.namespace, hit.name);
         let sev = hit.severity.clone().unwrap_or_else(|| "-".into());
+        let fam = hit.family.clone().unwrap_or_else(|| "-".into());
         let tags = if hit.tags.is_empty() {
             "-".into()
         } else {
             hit.tags.join(",")
         };
-        println!("{:<40} {:<10} {:<10} {}", id, hit.visibility, sev, tags);
+        println!(
+            "{:<40} {:<10} {:<10} {:<10} {}",
+            id, hit.visibility, sev, fam, tags
+        );
     }
     let last_page = ((resp.total as u32).max(1)).div_ceil(resp.per_page.max(1));
     println!(
@@ -573,6 +581,11 @@ pub async fn cmd_info(args: InfoArgs) -> ExitCode {
 fn print_info_human(s: &ScriptResponse) {
     println!("{}/{}", s.namespace, s.name);
     println!("  visibility: {}", s.visibility);
+    if let Some(fam) = &s.family
+        && !fam.is_empty()
+    {
+        println!("  family: {fam}");
+    }
     if let Some(d) = &s.description
         && !d.is_empty()
     {
@@ -997,4 +1010,53 @@ async fn resolve_registry_ref(
     install_store::resolve_to_path(&store, &client, r#ref)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Resolve every published script in `family` to a local `.bc` path,
+/// installing each into the cache on the way. Used by `scan --family`.
+/// Returns an error if the family has no scripts (so the scan doesn't
+/// silently no-op).
+pub async fn resolve_family_to_bytecodes(
+    family: &str,
+    registry: &RegistryArgs,
+) -> Result<Vec<PathBuf>, String> {
+    let base_url = resolve_base_url(registry.registry.as_deref());
+    let token = credentials::load(&base_url).ok().flatten().map(|c| c.token);
+    let client = RegistryClient::new(base_url, token).map_err(|e: RegistryError| e.to_string())?;
+    let store = InstallStore::default_for_user().map_err(|e| e.to_string())?;
+
+    // One page of up to 100 — families aren't expected to exceed that
+    // in the MVP. Paginate later if a family grows past it.
+    let params = SearchParams {
+        family: Some(family.to_string()),
+        per_page: Some(100),
+        ..Default::default()
+    };
+    let resp = client.search(&params).await.map_err(|e| e.to_string())?;
+    if resp.results.is_empty() {
+        return Err(format!("no scripts found in family `{family}`"));
+    }
+
+    let mut paths = Vec::with_capacity(resp.results.len());
+    for hit in &resp.results {
+        let r#ref = RegistryRef {
+            namespace: hit.namespace.clone(),
+            name: hit.name.clone(),
+            range: None,
+        };
+        match install_store::resolve_to_path(&store, &client, &r#ref).await {
+            Ok(p) => paths.push(p),
+            Err(e) => {
+                // One bad script shouldn't sink the whole family scan —
+                // warn and carry on with the rest.
+                ui::error(&format!("skip {}/{}: {e}", hit.namespace, hit.name));
+            }
+        }
+    }
+    if paths.is_empty() {
+        return Err(format!(
+            "every script in family `{family}` failed to install"
+        ));
+    }
+    Ok(paths)
 }

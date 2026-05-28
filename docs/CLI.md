@@ -159,6 +159,14 @@ Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` sour
 
 `--script` also accepts a `--registry <URL>` override for ref resolution.
 
+### Scan a whole family
+
+```bash
+ruso scan --family web --target https://lab.local -v
+```
+
+`--family <name>` is mutually exclusive with `--script` (exactly one is required). It queries the registry for every published script in that curated family (`web`, `network`, `database`, …), installs each into the local cache, and runs them all against the target(s). One script failing to install is warned and skipped, not fatal. A family with no scripts errors out rather than silently doing nothing.
+
 ## `login`
 
 ```bash

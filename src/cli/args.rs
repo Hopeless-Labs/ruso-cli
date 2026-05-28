@@ -275,6 +275,9 @@ pub struct SearchArgs {
     pub cve: Option<String>,
     #[arg(long, value_name = "NAMESPACE")]
     pub namespace: Option<String>,
+    /// Filter by curated family (e.g. `web`, `network`, `database`).
+    #[arg(long, value_name = "FAMILY")]
+    pub family: Option<String>,
     #[arg(long, default_value_t = 1, value_name = "N")]
     pub page: u32,
     #[arg(long, default_value_t = 20, value_name = "N")]
@@ -286,8 +289,18 @@ pub struct SearchArgs {
 
 #[derive(Debug, Parser)]
 pub struct ScanArgs {
-    #[command(flatten)]
-    pub script: ScriptArgs,
+    /// Path to a `.ruso` file, a directory of `.ruso` files, or a registry
+    /// reference like `<namespace>/<name>[@<semver-range>]`. Mutually
+    /// exclusive with `--family`; exactly one is required.
+    #[arg(long, value_name = "PATH|REF")]
+    pub script: Option<String>,
+
+    /// Scan every published script in a registry family (e.g. `web`,
+    /// `network`, `database`). Resolves the family from the registry,
+    /// installs each script into the local cache, and runs them all.
+    /// Mutually exclusive with `--script`.
+    #[arg(long, value_name = "FAMILY")]
+    pub family: Option<String>,
 
     /// Target URL (`https://…`) or path to a file with one URL per line
     #[arg(long, value_name = "URL|FILE")]
