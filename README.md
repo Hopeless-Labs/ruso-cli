@@ -12,7 +12,7 @@ Command-line tool for Ruso checks (`ruso` binary). Runs `.ruso` scripts locally,
 
 | Command | Description |
 |---------|-------------|
-| `scan` | Run `.ruso` scripts against targets (compile + run in one step) |
+| `scan` | Run `.ruso` scripts against targets (compile + run in one step). `--script <path\|ref>` or `--family <name>` to run a whole category |
 | `validate` | Validate `.ruso` syntax (no network) |
 | `compile` | Compile to `<name>.bc` (hex text, no terminal output) |
 | `exec` | Run `.bc` bytecode against targets |
@@ -26,7 +26,7 @@ Command-line tool for Ruso checks (`ruso` binary). Runs `.ruso` scripts locally,
 | `whoami` | Show the user the stored credential belongs to |
 | `publish` | Upload a `.ruso` script to the registry |
 | `install` | Download `<namespace>/<name>[@<range>]` into the local cache |
-| `search` | Search published scripts (free-text + tag/severity/cve/namespace filters) |
+| `search` | Search published scripts (free-text + tag/severity/cve/namespace/family filters) |
 | `info` | Show registry metadata for a script (versions, install snippet, tags) |
 | `yank` / `unyank` | Pull / restore a published version (owner-only, idempotent) |
 | `edit` | Update description / visibility of a script you own |
