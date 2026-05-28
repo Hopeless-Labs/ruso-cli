@@ -237,9 +237,9 @@ pub struct PublishArgs {
     /// (not yet exposed in the CLI).
     #[arg(long, value_enum)]
     pub visibility: Option<Visibility>,
-    /// Override the namespace. Defaults to your username (from `/v1/me`).
-    #[arg(long, value_name = "NAMESPACE")]
-    pub namespace: Option<String>,
+    // No --namespace: the registry has no organizations, so a script is
+    // always published under the caller's own username. Re-add this when
+    // orgs land with real shared-namespace semantics.
 }
 
 #[derive(Debug, Parser)]

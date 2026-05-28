@@ -209,19 +209,22 @@ stored.
 ```bash
 ruso publish ./mycheck.ruso
 ruso publish ./mycheck.ruso --visibility private
-ruso publish ./mycheck.ruso --namespace shared-org   # override default ns
 ```
 
 | Flag | Effect |
 |------|--------|
 | `--visibility <public\|private>` | First-publish-only. Subsequent publishes inherit the existing visibility (change via `PATCH` — not yet exposed in the CLI). |
-| `--namespace <NAME>` | Override the auto-derived namespace. Defaults to your username from `/v1/me`. |
 | `--registry <URL>` | Override the registry base URL. |
 
+A script is always published under **your own username** as the
+namespace — the registry has no organizations, so there's no flag to
+target a different one. (The backend rejects a mismatched namespace
+with 404.)
+
 The script's `name "…"` metadata is slugified to form the URL path
-component. `version "X.Y.Z"` and (optional) `tags [...]` metadata are
-extracted from the `.ruso` source by the backend at publish time —
-both fields are immutable per version.
+component. `version "X.Y.Z"`, optional `tags [...]`, and optional
+`family "…"` metadata are extracted from the `.ruso` source by the
+backend at publish time — all immutable per version.
 
 Success output:
 

@@ -211,15 +211,14 @@ pub async fn cmd_publish(args: PublishArgs) -> ExitCode {
         }
     };
 
-    let namespace = match args.namespace {
-        Some(ns) => ns,
-        None => match client.me().await {
-            Ok(me) => me.username,
-            Err(err) => {
-                ui::error(&format!("could not determine namespace from /v1/me: {err}"));
-                return ExitCode::from(1);
-            }
-        },
+    // Namespace is always the caller's own username — the registry has
+    // no organizations, so a script can only be published under you.
+    let namespace = match client.me().await {
+        Ok(me) => me.username,
+        Err(err) => {
+            ui::error(&format!("could not determine namespace from /v1/me: {err}"));
+            return ExitCode::from(1);
+        }
     };
 
     let visibility = args.visibility.map(visibility_str);
