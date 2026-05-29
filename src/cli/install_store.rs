@@ -30,6 +30,10 @@ pub enum InstallError {
         name: String,
         range: String,
     },
+    #[error(
+        "invalid script reference `{reference}`: namespace and name must be registry slugs (^[a-z0-9][a-z0-9-]{{0,38}}$)"
+    )]
+    InvalidRef { reference: String },
     #[error("failed to read {path}: {source}")]
     Read {
         path: PathBuf,
@@ -58,6 +62,24 @@ impl RegistryRef {
         match &self.range {
             Some(r) => format!("{}/{}@{}", self.namespace, self.name, r),
             None => format!("{}/{}", self.namespace, self.name),
+        }
+    }
+
+    /// Reject refs whose namespace/name aren't registry slugs.
+    ///
+    /// `parse_ref` already enforces this for user-typed refs, but a ref can
+    /// also be built straight from a registry response (e.g. `scan --family`,
+    /// which the user may point at an arbitrary `--registry`). ns/name land in
+    /// `scripts/<ns>/<name>/…`, so an unvalidated `..` would let a hostile or
+    /// compromised registry write the downloaded bytecode outside the cache.
+    /// Validate at the path-building chokepoint so no caller can traverse.
+    fn validate_slugs(&self) -> Result<(), InstallError> {
+        if is_slug(&self.namespace) && is_slug(&self.name) {
+            Ok(())
+        } else {
+            Err(InstallError::InvalidRef {
+                reference: self.display(),
+            })
         }
     }
 }
@@ -264,6 +286,9 @@ pub async fn install(
     client: &RegistryClient,
     r#ref: &RegistryRef,
 ) -> Result<(Version, PathBuf), InstallError> {
+    // Gate every filesystem path built from this ref (read and write) behind
+    // a slug check — a ref may come from an untrusted registry response.
+    r#ref.validate_slugs()?;
     if let Some(local) =
         best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())?
     {
@@ -338,6 +363,36 @@ mod tests {
         assert!(parse_ref("foo/bar/baz").is_none()); // three segments
         assert!(parse_ref("Foo/bar").is_none()); // uppercase
         assert!(parse_ref("foo/bar@").is_none()); // empty range
+    }
+
+    #[test]
+    fn validate_slugs_rejects_path_traversal() {
+        // A hostile/compromised registry could return a search hit whose
+        // namespace or name contains `..`; scan --family builds a RegistryRef
+        // straight from that. It must be rejected before any path is built.
+        let evil = RegistryRef {
+            namespace: "../../../../tmp".into(),
+            name: "evil".into(),
+            range: None,
+        };
+        assert!(matches!(
+            evil.validate_slugs(),
+            Err(InstallError::InvalidRef { .. })
+        ));
+
+        let evil_name = RegistryRef {
+            namespace: "alice".into(),
+            name: "..".into(),
+            range: None,
+        };
+        assert!(evil_name.validate_slugs().is_err());
+
+        let ok = RegistryRef {
+            namespace: "alice".into(),
+            name: "log4shell".into(),
+            range: None,
+        };
+        assert!(ok.validate_slugs().is_ok());
     }
 
     #[test]
