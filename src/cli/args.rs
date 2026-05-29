@@ -12,8 +12,10 @@ use ruso_script::{CompileError, compile_program, parse};
 #[command(
     name = "ruso",
     version,
-    about = "Run Ruso vulnerability scan scripts",
-    long_about = "Commands: scan, validate, compile, exec.\n\
+    about = "Run Ruso vulnerability scan scripts + talk to the registry",
+    long_about = "Local: scan, validate, compile, exec.\n\
+                  Registry: login, logout, whoami, publish, install, search, \
+                  info, yank, unyank, edit, pat.\n\
                   Use RUST_LOG to override log levels (e.g. RUST_LOG=ruso=debug)."
 )]
 pub struct Cli {

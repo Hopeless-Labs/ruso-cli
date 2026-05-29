@@ -1,6 +1,6 @@
 # CLI (`ruso`)
 
-Binary name: **`ruso`**. Ten commands across two groups:
+Binary name: **`ruso`**. Fifteen commands across two groups:
 
 **Local** (no network):
 
@@ -18,11 +18,15 @@ Binary name: **`ruso`**. Ten commands across two groups:
 | `login` | Save a PAT or session token for the active registry |
 | `logout` | Delete the stored credential |
 | `whoami` | Show the user the stored credential belongs to |
-| `publish` | Upload a `.ruso` script |
+| `publish` | Upload a `.ruso` script (under your own namespace) |
 | `install` | Download `<ns>/<name>[@<range>]` into the local cache |
 | `search` | Search published scripts |
+| `info` | Show registry metadata for a script (versions, install, tags, family) |
+| `yank` / `unyank` | Pull / restore a published version (owner, idempotent) |
+| `edit` | Update description / visibility of a script you own |
+| `pat list/create/revoke` | Manage personal access tokens |
 
-Plus: `scan` and `exec` accept `<ns>/<name>[@<range>]` registry refs in `--script` / `--bytecode` and resolve them through the local cache (auto-installing on miss).
+Plus: `scan` accepts `--script <ns>/<name>[@<range>]` (single registry ref) **or** `--family <name>` (every installed/published script in a curated family); `exec` accepts the same ref form in `--bytecode`. Refs resolve through the local cache, auto-installing on miss.
 
 ## Build
 
