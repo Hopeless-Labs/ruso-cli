@@ -1106,7 +1106,7 @@ dependencies = [
 [[package]]
 name = "ruso-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#80622ba8d2ef8c39982e80379d8db16492ee5caf"
+source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#b00c2774fa80a24433bd17b2320b97767e7ff72f"
 dependencies = [
  "futures",
  "regex",
