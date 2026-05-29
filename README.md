@@ -74,7 +74,7 @@ ruso scan --script someuser/log4shell --target https://target.example.com -v
 
 ### Pointing at a different registry
 
-Registry URL precedence: `--registry <url>` > `$RUSO_REGISTRY_URL` > built-in default (`http://127.0.0.1:8080`, a placeholder until a hosted instance lands).
+Registry URL precedence: `--registry <url>` > `$RUSO_REGISTRY_URL` > built-in default (`https://ruso.hopeless-labs.com`, the hosted registry; use `http://127.0.0.1:8080` for a local `ruso-backend`).
 
 Credentials are stored per registry URL in `$XDG_CONFIG_HOME/ruso/credentials.json` (mode 0600 on Unix), so the same machine can be logged into a local backend *and* a hosted one at the same time.
 

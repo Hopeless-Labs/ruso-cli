@@ -50,8 +50,8 @@ this order:
 
 1. `--registry <URL>` flag on the command
 2. `RUSO_REGISTRY_URL` environment variable
-3. Built-in default `http://127.0.0.1:8080` (placeholder until a hosted
-   instance lands)
+3. Built-in default `https://ruso.hopeless-labs.com` (the hosted registry;
+   use `http://127.0.0.1:8080` to point at a local `ruso-backend`)
 
 Credentials are stored per registry base URL in
 `$XDG_CONFIG_HOME/ruso/credentials.json` (Linux/macOS) or

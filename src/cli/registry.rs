@@ -11,9 +11,9 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Hardcoded default for MVP. Override with `--registry` or
-/// `RUSO_REGISTRY_URL`. Once we have a hosted instance, change this.
-pub const DEFAULT_REGISTRY: &str = "http://127.0.0.1:8080";
+/// The hosted registry. Override with `--registry` or `RUSO_REGISTRY_URL`
+/// (e.g. `http://127.0.0.1:8080` when running a local `ruso-backend`).
+pub const DEFAULT_REGISTRY: &str = "https://ruso.hopeless-labs.com";
 
 const USER_AGENT: &str = concat!("ruso-cli/", env!("CARGO_PKG_VERSION"));
 
