@@ -83,6 +83,12 @@ pub struct FindingRecord {
     pub cvss_score: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mitigation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
 }
@@ -122,6 +128,12 @@ impl ScanRunReport {
 
 impl ScanResultRecord {
     pub fn from_execution(target: String, script: String, result: &ExecutionResult) -> Self {
+        // `version`, `family`, and `tags` are script-level metadata the runtime
+        // Finding doesn't carry, but the full CheckMetadata rides on the
+        // ExecutionResult — fold them in so the report holds every metadata
+        // field. There is one finding per script, so attaching script-level
+        // metadata to it is unambiguous.
+        let meta = &result.metadata;
         let findings = result
             .report
             .findings
@@ -138,6 +150,9 @@ impl ScanResultRecord {
                 cvss: f.cvss.clone(),
                 cvss_score: f.cvss_score.clone(),
                 mitigation: f.mitigation.clone(),
+                version: meta.version.clone(),
+                family: meta.family.clone(),
+                tags: meta.tags.clone(),
                 evidence: f.evidence.clone(),
             })
             .collect();
@@ -296,6 +311,9 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
             "cvss",
             "cvss_score",
             "mitigation",
+            "version",
+            "family",
+            "tags",
             "evidence",
             "error",
         ])
@@ -335,6 +353,9 @@ fn write_csv_row(
     let mitigation = finding
         .and_then(|f| f.mitigation.clone())
         .unwrap_or_default();
+    let version = finding.and_then(|f| f.version.clone()).unwrap_or_default();
+    let family = finding.and_then(|f| f.family.clone()).unwrap_or_default();
+    let tags = finding.map(|f| f.tags.join(" | ")).unwrap_or_default();
     writer
         .write_record([
             row.target.as_str(),
@@ -355,6 +376,9 @@ fn write_csv_row(
             cvss.as_str(),
             cvss_score.as_str(),
             mitigation.as_str(),
+            version.as_str(),
+            family.as_str(),
+            tags.as_str(),
             evidence.as_str(),
             row.error.as_deref().unwrap_or(""),
         ])
@@ -362,27 +386,19 @@ fn write_csv_row(
 }
 
 /// Incremental line while scanning (`-v` + human) on stdout.
-pub fn print_live_run(record: &ScanResultRecord, multi_target: bool) {
-    if multi_target {
-        print!("{} ", record.target);
-    }
-    print!("{}: ", script_label(&record.script));
+pub fn print_live_run(record: &ScanResultRecord, _multi_target: bool) {
+    let label = script_label(&record.script);
     if record.skipped {
         let msg = record.skip_reason.as_deref().unwrap_or("port closed");
-        println!("skipped ({msg})");
-        return;
-    }
-    if let Some(err) = &record.error {
-        println!("error ({err})");
-        return;
-    }
-    if record.detected {
-        println!("detected");
+        println!("[SKIP]  {} {label} ({msg})", record.target);
+    } else if let Some(err) = &record.error {
+        println!("[ERROR] {} {label} ({err})", record.target);
+    } else if record.detected {
         for finding in &record.findings {
-            print_finding_human(finding);
+            print_finding_line(&record.target, finding);
         }
     } else {
-        println!("no");
+        println!("[OK]    {} {label}", record.target);
     }
 }
 
@@ -390,16 +406,12 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
     let multi = report.summary.total_runs > 1;
 
     if !verbose {
+        // One line per finding: `[SEVERITY] target title`. Only detected runs
+        // carry findings, so non-detected runs stay silent here. Full metadata
+        // is in the --report file.
         for record in &report.results {
-            if !record.detected {
-                continue;
-            }
-            if multi {
-                print!("{} ", record.target);
-            }
-            println!("{}: detected", script_label(&record.script));
             for finding in &record.findings {
-                print_finding_human(finding);
+                print_finding_line(&record.target, finding);
             }
         }
     }
@@ -439,42 +451,17 @@ fn script_label(script: &str) -> String {
         .unwrap_or_else(|| script.to_string())
 }
 
-fn print_finding_human(finding: &FindingRecord) {
-    println!("[{}] {}", finding.severity, finding.name);
-    if let Some(description) = &finding.description {
-        println!("  description: {description}");
-    }
-    if let Some(impact) = &finding.impact {
-        println!("  impact: {impact}");
-    }
-    if let Some(author) = &finding.author {
-        println!("  author: {author}");
-    }
-    for cve in &finding.cve {
-        println!("  cve: {cve}");
-    }
-    for cwe in &finding.cwe {
-        println!("  cwe: {cwe}");
-    }
-    for reference in &finding.references {
-        println!("  references: {reference}");
-    }
-    for cvss in &finding.cvss {
-        println!("  cvss: {cvss}");
-    }
-    for score in &finding.cvss_score {
-        println!("  cvss_score: {score}");
-    }
-    if let Some(mitigation) = &finding.mitigation {
-        println!("  mitigation: {mitigation}");
-    }
-    for evidence in &finding.evidence {
-        println!("  evidence: {}", truncate_evidence(evidence, 200));
-    }
-}
-
-fn truncate_evidence(text: &str, max_len: usize) -> String {
-    crate::util::truncate_str(text, max_len)
+/// One readable line per finding: `[SEVERITY] target title`. The full
+/// metadata (description, cve/cwe, cvss, mitigation, evidence, version,
+/// family, tags, …) is written to the `--report` json/csv file, not the
+/// console log.
+fn print_finding_line(target: &str, finding: &FindingRecord) {
+    println!(
+        "[{}] {} {}",
+        finding.severity.to_uppercase(),
+        target,
+        finding.name
+    );
 }
 
 pub fn exit_code_from_report(report: &ScanRunReport) -> i32 {

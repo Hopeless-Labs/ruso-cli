@@ -5,7 +5,6 @@
 
 mod cli;
 mod logging;
-mod util;
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {

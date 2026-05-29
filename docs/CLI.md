@@ -40,7 +40,7 @@ cargo build --release
 | Flag | Effect |
 |------|--------|
 | `-q` / `--quiet` | Less logging |
-| `-v` / `--verbose` | More logging; live `detected` / `no` lines during scan/exec |
+| `-v` / `--verbose` | More logging; live per-run status lines (`[SEVERITY] …`, `[OK]`, `[SKIP]`, `[ERROR]`) during scan/exec |
 | `RUST_LOG` | Overrides default filter |
 
 ## Registry URL resolution
@@ -411,18 +411,30 @@ Idempotent — already-revoked tokens still return success.
 
 ## Report output (`--output json` / `csv` / `human`)
 
-Findings include check metadata from the script `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`, `author`, and `evidence`, positive rows may include:
+**Human output is a one line per finding:** `[SEVERITY] <target> <title>`
+(e.g. `[CRITICAL] http://127.0.0.1 Redis exposed without authentication`).
+The full metadata is intentionally kept out of the console — use
+`--output json` / `csv` with `--report <path>` for the complete record. In
+`-v` mode each run also logs a status line: `[OK]`, `[SKIP] … (reason)`, or
+`[ERROR] … (msg)`.
+
+The **json/csv report carries every metadata field** from the script
+`metadata { … }` block. Besides `name`, `description`, `impact`, `severity`,
+`author`, and `evidence`:
 
 | Field | Source in `.ruso` |
 |-------|-------------------|
-| `cve` | `cve ["…", "…"]` list (JSON array; CSV/human joined with ` \| `) |
+| `cve` | `cve ["…", "…"]` list (JSON array; CSV joined with ` \| `) |
 | `cwe` | `cwe ["…"]` list |
 | `references` | `references ["…", "…"]` list (URLs, advisories, etc.) |
 | `cvss` | Repeatable `cvss "…"` lines (CVSS vector, e.g. `CVSS:3.1/…`) |
 | `cvss_score` | Repeatable `cvss_score 9.8` lines (numeric literal, stored as string in reports) |
 | `mitigation` | Single `mitigation "…"` line (remediation guidance; declaring it twice is a compile error) |
+| `version` | `version "X.Y.Z"` (script SemVer) |
+| `family` | `family "web"` (curated category) |
+| `tags` | `tags ["…", "…"]` free-form labels |
 
-Empty lists are omitted from JSON (`skip_serializing_if`).
+Empty lists / absent fields are omitted from JSON (`skip_serializing_if`).
 
 ### `skip_reason` vs `error`
 
@@ -466,4 +478,4 @@ ruso scan --script someone/another-check --target https://lab.local -v
 
 ## Exit codes
 
-Non-zero on validation/compile failure, missing paths, runtime errors, or report I/O. A successful run with no finding is exit `0` (`no` in verbose human output).
+Non-zero on validation/compile failure, missing paths, runtime errors, or report I/O. A successful run with no finding is exit `0` (`[OK]` line in verbose human output).
