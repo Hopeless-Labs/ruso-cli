@@ -283,8 +283,12 @@ fn slugify_or_err(raw: &str) -> Result<String, String> {
     if slug.is_empty() {
         return Err(format!("cannot derive registry slug from `{raw}`"));
     }
-    if slug.len() > 64 {
-        slug.truncate(64);
+    // Cap at the registry's slug limit (backend `SCRIPT_NAME` is
+    // `^[a-z0-9][a-z0-9-]{0,38}$`, i.e. max 39 chars). Truncating to a
+    // larger value here would only push the rejection to the server as a
+    // 400; trim client-side so the derived slug is always publishable.
+    if slug.len() > 39 {
+        slug.truncate(39);
         while slug.ends_with('-') {
             slug.pop();
         }
