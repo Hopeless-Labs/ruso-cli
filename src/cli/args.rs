@@ -515,6 +515,9 @@ pub fn validate_source(source: &str, path_display: &str) -> Result<(), ExitCode>
             CompileError::MissingFindingTitle => {
                 "missing `name` or `report` metadata (required when using match/evidence)"
             }
+            CompileError::DuplicateMitigation => {
+                "`mitigation` may appear at most once (single free-text field)"
+            }
         };
         tracing::error!(script = %path_display, error = %message, "validation failed");
         ExitCode::from(1)

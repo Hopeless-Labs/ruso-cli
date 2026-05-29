@@ -120,6 +120,13 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
                 ));
                 return process::ExitCode::from(1);
             }
+            Err(CompileError::DuplicateMitigation) => {
+                ui::error(&format!(
+                    "{}: `mitigation` may appear at most once (single free-text field)",
+                    path.display()
+                ));
+                return process::ExitCode::from(1);
+            }
         };
         let raw = encode_bytecode(&bytecode);
         let hex = bytes_to_hex(&raw);
@@ -298,6 +305,10 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
                         Err(CompileError::MissingFindingTitle) => PreparedScript::Failed {
                             label,
                             error: "missing `name` or `report` metadata (required when using match/evidence)".into(),
+                        },
+                        Err(CompileError::DuplicateMitigation) => PreparedScript::Failed {
+                            label,
+                            error: "`mitigation` may appear at most once (single free-text field)".into(),
                         },
                     },
                     Err(err) => PreparedScript::Failed {

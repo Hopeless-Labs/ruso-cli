@@ -81,8 +81,8 @@ pub struct FindingRecord {
     pub cvss: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cvss_score: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub mitigation: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mitigation: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub evidence: Vec<String>,
 }
@@ -333,7 +333,7 @@ fn write_csv_row(
         .map(|f| f.cvss_score.join(" | "))
         .unwrap_or_default();
     let mitigation = finding
-        .map(|f| f.mitigation.join(" | "))
+        .and_then(|f| f.mitigation.clone())
         .unwrap_or_default();
     writer
         .write_record([
@@ -465,7 +465,7 @@ fn print_finding_human(finding: &FindingRecord) {
     for score in &finding.cvss_score {
         println!("  cvss_score: {score}");
     }
-    for mitigation in &finding.mitigation {
+    if let Some(mitigation) = &finding.mitigation {
         println!("  mitigation: {mitigation}");
     }
     for evidence in &finding.evidence {
