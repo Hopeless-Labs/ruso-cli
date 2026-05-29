@@ -1106,7 +1106,7 @@ dependencies = [
 [[package]]
 name = "ruso-runtime"
 version = "0.1.0-dev"
-source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#18b0c574fbbfc42b646050018439723529e427d8"
+source = "git+https://github.com/Hopeless-Labs/ruso-runtime.git?branch=main#80622ba8d2ef8c39982e80379d8db16492ee5caf"
 dependencies = [
  "futures",
  "regex",
@@ -1123,7 +1123,7 @@ dependencies = [
 [[package]]
 name = "ruso-script"
 version = "0.1.0-dev"
-source = "git+https://github.com/Hopeless-Labs/ruso-script.git?branch=main#a9b48baa800550db0f97ceab3dda5f99735fcb1d"
+source = "git+https://github.com/Hopeless-Labs/ruso-script.git?branch=main#2fafb04bb1bd4d8e85840edaf274b0e3a914f3a6"
 dependencies = [
  "pest",
  "pest_derive",
