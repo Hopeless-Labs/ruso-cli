@@ -21,11 +21,18 @@ impl Spinner {
 
         let handle = thread::spawn(move || {
             let mut frame = 0usize;
-            let mut stderr = std::io::stderr().lock();
             while !done_thread.load(Ordering::Relaxed) {
-                let ch = FRAMES[frame % FRAMES.len()];
-                let _ = write!(stderr, "\r{ch} ");
-                let _ = stderr.flush();
+                // Lock stderr per frame, not for the spinner's whole lifetime.
+                // Holding the lock across the sleep would deadlock the main
+                // thread the moment it tries to emit an error (ui::error /
+                // tracing) while the spinner is still running — which is
+                // exactly what every failed scan/validate/compile does.
+                {
+                    let mut stderr = std::io::stderr().lock();
+                    let ch = FRAMES[frame % FRAMES.len()];
+                    let _ = write!(stderr, "\r{ch} ");
+                    let _ = stderr.flush();
+                }
                 frame += 1;
                 thread::sleep(Duration::from_millis(80));
             }
