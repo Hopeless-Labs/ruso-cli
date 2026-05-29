@@ -586,7 +586,20 @@ fn parse_cli_duration(value: &str, flag: &str) -> Result<std::time::Duration, Ex
 
 pub fn executor_config_for_target(base: &ExecutorConfig, target: &str) -> ExecutorConfig {
     ExecutorConfig {
-        base_url: target.to_string(),
+        base_url: normalize_base_url(target),
         ..base.clone()
+    }
+}
+
+/// The runtime derives `{{scan_host}}` from `base_url` (via `Url::parse`) and
+/// uses it as the prefix for HTTP probe paths, so it needs a scheme. A user
+/// scanning a non-HTTP service may pass a bare host/IP (`127.0.0.1`,
+/// `db.internal:5432`); give it an `http://` carrier so host extraction and
+/// any HTTP probe still work. A target that already has a scheme is untouched.
+fn normalize_base_url(target: &str) -> String {
+    if target.starts_with("http://") || target.starts_with("https://") {
+        target.to_string()
+    } else {
+        format!("http://{target}")
     }
 }

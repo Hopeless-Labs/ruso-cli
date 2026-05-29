@@ -120,7 +120,7 @@ ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
 | Flag | Description |
 |------|-------------|
 | `--bytecode` | `.bc` file, directory of `.bc` files, or registry ref `<ns>/<name>[@<range>]` |
-| `--target` | URL or file (one URL per line) |
+| `--target` | URL (`http(s)://…`), bare host/IP/domain (`127.0.0.1`, `db.internal:5432`, `[::1]:9000`), or a file with one target per line |
 | `--registry <URL>` | Override the registry base URL (only consulted for ref inputs) |
 | `--timeout` | Default `30s` |
 | `--read-timeout` | Per-read I/O timeout for socket probes (default `10s`) |
@@ -412,7 +412,7 @@ Idempotent — already-revoked tokens still return success.
 ## Report output (`--output json` / `csv` / `human`)
 
 **Human output is a one line per finding:** `[SEVERITY] <target> <title>`
-(e.g. `[CRITICAL] http://127.0.0.1 Redis exposed without authentication`).
+(e.g. `[CRITICAL] 127.0.0.1 Redis exposed without authentication`).
 The full metadata is intentionally kept out of the console — use
 `--output json` / `csv` with `--report <path>` for the complete record. In
 `-v` mode each run also logs a status line: `[OK]`, `[SKIP] … (reason)`, or
@@ -454,6 +454,7 @@ downstream tooling. The CSV header now includes `skipped` and
 
 ## Scan target and socket checks
 
+- `--target` accepts a full URL or a bare host/IP/domain. A bare target gets an `http://` carrier internally so `{{scan_host}}` resolves and HTTP probes work; for a non-HTTP scan (Redis, NTP, …) just pass the host (`--target 127.0.0.1`).
 - **HTTP** checks use `--target` as the request base URL.
 - **TCP/UDP/DNS wire** checks use `host` in the `.ruso` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
 - `ruso validate` / `ruso compile` fail if the script has `match` or `evidence` but no `name` or `report` metadata.

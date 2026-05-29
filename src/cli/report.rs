@@ -388,17 +388,18 @@ fn write_csv_row(
 /// Incremental line while scanning (`-v` + human) on stdout.
 pub fn print_live_run(record: &ScanResultRecord, _multi_target: bool) {
     let label = script_label(&record.script);
+    let target = display_target(&record.target);
     if record.skipped {
         let msg = record.skip_reason.as_deref().unwrap_or("port closed");
-        println!("[SKIP]  {} {label} ({msg})", record.target);
+        println!("[SKIP]  {target} {label} ({msg})");
     } else if let Some(err) = &record.error {
-        println!("[ERROR] {} {label} ({err})", record.target);
+        println!("[ERROR] {target} {label} ({err})");
     } else if record.detected {
         for finding in &record.findings {
             print_finding_line(&record.target, finding);
         }
     } else {
-        println!("[OK]    {} {label}", record.target);
+        println!("[OK]    {target} {label}");
     }
 }
 
@@ -459,9 +460,20 @@ fn print_finding_line(target: &str, finding: &FindingRecord) {
     println!(
         "[{}] {} {}",
         finding.severity.to_uppercase(),
-        target,
+        display_target(target),
         finding.name
     );
+}
+
+/// Strip the `http(s)://` carrier scheme for display. `--target` may be a URL
+/// or a bare host; a TCP/UDP/DNS scan isn't HTTP, so showing `http://host` for
+/// a Redis finding reads wrong. The report keeps the full original target —
+/// only the console log is trimmed.
+fn display_target(target: &str) -> &str {
+    target
+        .strip_prefix("https://")
+        .or_else(|| target.strip_prefix("http://"))
+        .unwrap_or(target)
 }
 
 pub fn exit_code_from_report(report: &ScanRunReport) -> i32 {

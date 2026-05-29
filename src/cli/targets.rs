@@ -22,10 +22,13 @@ pub enum TargetError {
     },
 }
 
-/// Resolve `--target` to a list of base URLs.
+/// Resolve `--target` to a list of scan origins.
 ///
-/// - Existing **file**: one URL per line (`#` comments and blank lines ignored)
+/// - Existing **file**: one target per line (`#` comments and blank lines ignored)
 /// - **URL** (`http://` / `https://`): single target
+/// - **Bare host / IP / domain** (`127.0.0.1`, `db.internal:5432`, `[::1]:9000`):
+///   single target — the runtime adds an `http://` carrier for `{{scan_host}}`
+///   and HTTP probes. Handy for TCP/UDP/DNS scans that aren't HTTP at all.
 pub fn discover_targets(target: &str) -> Result<Vec<String>, TargetError> {
     let trimmed = target.trim();
     if trimmed.is_empty() {
@@ -37,7 +40,7 @@ pub fn discover_targets(target: &str) -> Result<Vec<String>, TargetError> {
         return read_targets_file(path);
     }
 
-    if is_url(trimmed) {
+    if is_valid_target(trimmed) {
         return Ok(vec![trimmed.to_string()]);
     }
 
@@ -85,11 +88,16 @@ fn parse_target_line(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed.starts_with('#') {
         return None;
     }
-    if is_url(trimmed) {
+    if is_valid_target(trimmed) {
         Some(trimmed.to_string())
     } else {
         None
     }
+}
+
+/// A target is either an `http(s)://` URL or a bare host/IP/domain authority.
+fn is_valid_target(value: &str) -> bool {
+    is_url(value) || is_bare_host(value)
 }
 
 fn is_url(value: &str) -> bool {
@@ -104,6 +112,34 @@ fn is_url(value: &str) -> bool {
     // Reject "http://" with no authority — the bare scheme is not a usable
     // target and would otherwise pass the original startswith-only check.
     !rest.is_empty() && !rest.starts_with('/')
+}
+
+/// A bare authority: `host`, `host:port`, or a bracketed IPv6 literal
+/// (`[::1]`, `[::1]:9000`). No scheme, no path/query/fragment, no whitespace —
+/// anything richer should be written as a full URL.
+fn is_bare_host(value: &str) -> bool {
+    if value.is_empty()
+        || value.contains(char::is_whitespace)
+        || value.contains("://")
+        || value.contains('/')
+        || value.contains('?')
+        || value.contains('#')
+        || value.contains('@')
+    {
+        return false;
+    }
+    // IPv6 literal must be bracketed (bare `::1` is ambiguous with host:port).
+    if let Some(rest) = value.strip_prefix('[') {
+        return rest.contains(']');
+    }
+    // host[:port] — host is alphanumeric + `.`/`-`, not leading `.`/`-`.
+    let host = value.split(':').next().unwrap_or("");
+    !host.is_empty()
+        && !host.starts_with('.')
+        && !host.starts_with('-')
+        && host
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
 }
 
 #[cfg(test)]
@@ -162,5 +198,27 @@ mod tests {
         assert!(is_url("http://example.com"));
         assert!(is_url("https://127.0.0.1:8443"));
         assert!(is_url("http://[::1]:8080"));
+    }
+
+    #[test]
+    fn accepts_bare_host_ip_and_domain() {
+        assert!(is_valid_target("127.0.0.1"));
+        assert!(is_valid_target("db.internal:5432"));
+        assert!(is_valid_target("example.com"));
+        assert!(is_valid_target("[::1]:9000"));
+        // discover_targets returns a bare host verbatim (runtime adds scheme).
+        assert_eq!(
+            discover_targets("127.0.0.1:6379").unwrap(),
+            vec!["127.0.0.1:6379".to_string()]
+        );
+    }
+
+    #[test]
+    fn rejects_non_targets() {
+        assert!(!is_valid_target("has space"));
+        assert!(!is_valid_target("foo/bar")); // path-like, not a bare authority
+        assert!(!is_valid_target("::1")); // unbracketed IPv6 is ambiguous
+        assert!(!is_valid_target("-leading"));
+        assert!(!is_valid_target("user@host"));
     }
 }
