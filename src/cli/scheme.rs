@@ -124,9 +124,14 @@ mod tests {
     #[tokio::test]
     async fn socket_scan_keeps_http_carrier() {
         // needs_http == false -> bare host keeps the http:// carrier verbatim.
-        let out =
-            resolve_targets(vec!["db.internal:6379".into()], true, false, DefaultScheme::Https, true)
-                .await;
+        let out = resolve_targets(
+            vec!["db.internal:6379".into()],
+            true,
+            false,
+            DefaultScheme::Https,
+            true,
+        )
+        .await;
         assert_eq!(out, vec!["http://db.internal:6379"]);
     }
 
@@ -159,11 +164,23 @@ mod tests {
 
     #[tokio::test]
     async fn probe_disabled_applies_default_scheme() {
-        let https =
-            resolve_targets(vec!["x.example".into()], true, true, DefaultScheme::Https, false).await;
+        let https = resolve_targets(
+            vec!["x.example".into()],
+            true,
+            true,
+            DefaultScheme::Https,
+            false,
+        )
+        .await;
         assert_eq!(https, vec!["https://x.example"]);
-        let http =
-            resolve_targets(vec!["x.example".into()], true, true, DefaultScheme::Http, false).await;
+        let http = resolve_targets(
+            vec!["x.example".into()],
+            true,
+            true,
+            DefaultScheme::Http,
+            false,
+        )
+        .await;
         assert_eq!(http, vec!["http://x.example"]);
     }
 }
