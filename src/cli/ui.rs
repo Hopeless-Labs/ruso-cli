@@ -60,3 +60,9 @@ impl Drop for Spinner {
 pub fn error(message: &str) {
     eprintln!("error: {message}");
 }
+
+/// User-facing warning, always printed to stderr regardless of log verbosity
+/// (unlike `tracing::warn!`, which the default `ruso=off` filter suppresses).
+pub fn warn(message: &str) {
+    eprintln!("warning: {message}");
+}

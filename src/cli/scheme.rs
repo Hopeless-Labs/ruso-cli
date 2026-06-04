@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use crate::cli::args::DefaultScheme;
-use crate::cli::targets;
+use crate::cli::{targets, ui};
 
 /// Connect/total budget for a single scheme probe. Kept short so an
 /// unreachable port does not stall target resolution.
@@ -70,10 +70,10 @@ async fn resolve_one(
     // tell a cert problem (443 is up) apart from a dead port.
     if probe_responds(&https, false).await {
         if verify_ssl {
-            tracing::warn!(
+            ui::warn(&format!(
                 "{target}: 443 is reachable but its TLS certificate did not verify; \
                  scanning over https — pass --insecure to complete the scan"
-            );
+            ));
         }
         // 443 speaks TLS+HTTP; stay on https rather than downgrade to cleartext.
         return https;
