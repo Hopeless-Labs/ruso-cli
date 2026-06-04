@@ -332,6 +332,18 @@ pub struct ScanArgs {
     #[arg(long)]
     pub insecure: bool,
 
+    /// Scheme to assume for a bare-host `--target` (e.g. `example.com`) when the
+    /// connectivity probe is disabled or neither https nor http responds.
+    /// Default `https` (TLS-first); the probe still overrides this when it can
+    /// reach the host. Does not affect targets that already carry a scheme.
+    #[arg(long, value_enum, default_value_t = DefaultScheme::Https, value_name = "SCHEME")]
+    pub default_scheme: DefaultScheme,
+
+    /// Skip the https-first connectivity probe for bare-host targets and apply
+    /// `--default-scheme` directly. Use for deterministic/offline runs.
+    #[arg(long)]
+    pub no_scheme_probe: bool,
+
     /// HTTP proxy URL (e.g. `http://127.0.0.1:8080`)
     #[arg(long, value_name = "URL")]
     pub proxy: Option<String>,
@@ -445,6 +457,23 @@ pub struct ExecArgs {
     /// Registry to resolve `<namespace>/<name>[@<range>]` references against.
     #[command(flatten)]
     pub registry: RegistryArgs,
+}
+
+/// Scheme assumed for a bare-host `--target` when it cannot be probed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum DefaultScheme {
+    #[default]
+    Https,
+    Http,
+}
+
+impl DefaultScheme {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefaultScheme::Https => "https",
+            DefaultScheme::Http => "http",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]

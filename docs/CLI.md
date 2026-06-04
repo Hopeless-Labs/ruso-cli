@@ -163,6 +163,14 @@ Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` sour
 
 `--script` also accepts a `--registry <URL>` override for ref resolution.
 
+Scan-only flags (in addition to the shared ones above):
+
+| Flag | Description |
+|------|-------------|
+| `--family <name>` | Scan every published script in a registry family (mutually exclusive with `--script`) |
+| `--default-scheme <https\|http>` | Scheme for a bare-host `--target` when the probe is disabled or nothing answers (default `https`). See [Scan target and socket checks](#scan-target-and-socket-checks). |
+| `--no-scheme-probe` | Skip the https-first connectivity probe; apply `--default-scheme` directly (deterministic/offline runs) |
+
 ### Scan a whole family
 
 ```bash
@@ -454,7 +462,19 @@ downstream tooling. The CSV header now includes `skipped` and
 
 ## Scan target and socket checks
 
-- `--target` accepts a full URL or a bare host/IP/domain. A bare target gets an `http://` carrier internally so `{{scan_host}}` resolves and HTTP probes work; for a non-HTTP scan (Redis, NTP, …) just pass the host (`--target 127.0.0.1`).
+- `--target` accepts a full URL or a bare host/IP/domain. A target that already
+  carries a scheme is used as-is.
+- **Bare-host scheme resolution (`scan`).** For a bare host, `scan` resolves the
+  scheme **https-first**: it probes `https://` and uses it on any HTTP response;
+  it falls back to `http://` only when 443 is unreachable at the connection level
+  (refused/reset/timeout) — it never downgrades to cleartext because of a
+  certificate or HTTP-status error. If 443 is reachable but the certificate does
+  not verify and `--insecure` was not given, it stays on https and warns you to
+  pass `--insecure`. Control it with `--default-scheme <https|http>` (the fallback
+  when probing is off or nothing answers; default `https`) and `--no-scheme-probe`
+  (skip the probe, apply `--default-scheme` directly). A **non-HTTP** scan
+  (TCP/UDP/DNS only — Redis, NTP, …) skips the probe and keeps an `http://`
+  carrier, since the scheme never reaches the wire (`--target 127.0.0.1`).
 - **HTTP** checks use `--target` as the request base URL.
 - **TCP/UDP/DNS wire** checks use `host` in the `.ruso` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
 - `ruso validate` / `ruso compile` fail if the script has `match` or `evidence` but no `name` or `report` metadata.
