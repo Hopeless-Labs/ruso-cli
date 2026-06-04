@@ -7,6 +7,7 @@ pub mod discover;
 mod install_store;
 pub mod registry;
 mod report;
+mod scheme;
 mod targets;
 mod throttle;
 mod ui;
@@ -347,6 +348,27 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
             prepared
         }
     };
+
+    // Resolve the URL scheme for bare-host targets (https-first) before the
+    // run. Skipped when no script makes HTTP requests — the carrier scheme is
+    // irrelevant to TCP/UDP/DNS probes. Targets with an explicit scheme are
+    // untouched.
+    let needs_http = prepared_scripts.iter().any(|p| match p {
+        PreparedScript::Ready { bytecode, .. } => bytecode
+            .spec
+            .probes
+            .values()
+            .any(|kind| matches!(kind, ruso_runtime::ProbeKind::Http(_))),
+        PreparedScript::Failed { .. } => false,
+    });
+    let scan_targets = scheme::resolve_targets(
+        scan_targets,
+        base_config.verify_ssl,
+        needs_http,
+        args.default_scheme,
+        !args.no_scheme_probe,
+    )
+    .await;
 
     let script_labels: Vec<String> = prepared_scripts
         .iter()

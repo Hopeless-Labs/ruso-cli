@@ -100,7 +100,7 @@ fn is_valid_target(value: &str) -> bool {
     is_url(value) || is_bare_host(value)
 }
 
-fn is_url(value: &str) -> bool {
+pub(crate) fn is_url(value: &str) -> bool {
     let value = value.trim();
     let rest = if let Some(rest) = value.strip_prefix("http://") {
         rest
