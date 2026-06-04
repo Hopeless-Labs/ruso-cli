@@ -1,4 +1,4 @@
-# ruso-cli
+# Ruso-cli
 
 [![Rust CI](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml)
 
