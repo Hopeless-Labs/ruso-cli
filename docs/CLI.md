@@ -126,7 +126,7 @@ ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
 | `--read-timeout` | Per-read I/O timeout for socket probes (default `10s`) |
 | `--max-response-bytes` | HTTP body cap (default 10 MiB) |
 | `--no-follow-redirects` | HTTP |
-| `--insecure` | Disable TLS certificate verification. Defaults to **off** (TLS *is* verified); opt-in only for environments where you accept MITM and finding-injection risk. Emits a runtime warning when active. HTTP `verify_ssl` in the script still overrides per probe |
+| `--insecure` | Disable TLS certificate verification. Defaults to **off** (TLS *is* verified); opt-in only for environments where you accept MITM and finding-injection risk. Emits a runtime warning when active. If a scan run fails because a target's certificate did not verify, a one-shot hint suggests `--insecure` (covers bare hosts and explicit `https://` alike). HTTP `verify_ssl` in the script still overrides per probe |
 | `--proxy` | HTTP proxy |
 | `--script-timeout` | Per-script wall-clock budget (default `5m`) |
 | `--concurrency` | Parallel (target × script) runs (default `16`) |
@@ -477,6 +477,10 @@ downstream tooling. The CSV header now includes `skipped` and
   carrier, since the scheme never reaches the wire (`--target 127.0.0.1`).
 - **HTTP** checks use `--target` as the request base URL.
 - **TCP/UDP/DNS wire** checks use `host` in the `.ruso` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
+- **Failure reasons are reported in full.** A failed run shows the underlying
+  cause, not just a generic line — e.g. `http error: error sending request for
+  url (…): client error (Connect): invalid peer certificate: UnknownIssuer`
+  rather than a bare `error sending request`.
 - `ruso validate` / `ruso compile` fail if the script has `match` or `evidence` but no `name` or `report` metadata.
 
 ## Workflow
