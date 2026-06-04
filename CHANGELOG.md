@@ -4,6 +4,29 @@ All notable changes to the `ruso` CLI are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.2] - 2026-06-05
+
+### Added
+- `scan` resolves the URL scheme for a bare-host `--target` **https-first**: it
+  probes `https://` and uses it on any HTTP response, falling back to `http://`
+  only when 443 is unreachable at the connection level (refused/reset/timeout).
+  It never downgrades to cleartext because of a certificate or HTTP-status
+  error; if 443 is reachable but the certificate does not verify and
+  `--insecure` was not given, it stays on https and warns you to pass it.
+  Resolution runs once per target and is skipped for pure socket (TCP/UDP/DNS)
+  scans.
+- `--default-scheme <https|http>` — scheme to assume for a bare host when the
+  probe is disabled or nothing answers (default `https`).
+- `--no-scheme-probe` — skip the connectivity probe and apply `--default-scheme`
+  directly (deterministic/offline runs).
+
+### Changed
+- A bare host/domain `--target` now defaults to **https** instead of an
+  `http://` carrier (port 80), matching TLS-first production. This supersedes
+  the bare-host note from 0.1.0-beta.1. Socket (TCP/UDP/DNS) scans are
+  unaffected — they keep the `http://` carrier since the scheme never reaches
+  the wire. Targets with an explicit scheme are untouched.
+
 ## [0.1.0-beta.1] - 2026-05-30
 
 First public beta.
@@ -36,4 +59,5 @@ First public beta.
   A hostile or `--registry`-pointed server can no longer return a crafted
   `namespace` (`../…`) that writes downloaded bytecode outside the cache.
 
+[0.1.0-beta.2]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.1
