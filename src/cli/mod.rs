@@ -363,10 +363,13 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     });
     let scan_targets = scheme::resolve_targets(
         scan_targets,
-        base_config.verify_ssl,
-        needs_http,
-        args.default_scheme,
-        !args.no_scheme_probe,
+        &scheme::ResolveOptions {
+            verify_ssl: base_config.verify_ssl,
+            needs_http,
+            default_scheme: args.default_scheme,
+            probe: !args.no_scheme_probe,
+            proxy: args.proxy.as_deref(),
+        },
     )
     .await;
 
@@ -471,6 +474,12 @@ async fn run_scan_pipeline(
 
     let mut completed: Vec<Option<ScanResultRecord>> = (0..jobs.len()).map(|_| None).collect();
 
+    // Set when any run fails on TLS certificate verification, so we can surface
+    // the `--insecure` hint once after the scan. This covers explicitly-schemed
+    // `https://` targets too, which bypass the bare-host scheme probe (and thus
+    // its cert warning).
+    let cert_error = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
     let mut stream = stream::iter(jobs.into_iter().enumerate())
         .map(|(idx, (ti, si))| {
             let target = targets[ti].clone();
@@ -478,6 +487,7 @@ async fn run_scan_pipeline(
             let config = executor_config_for_target(base_config, &target);
             let host_throttle = host_throttle.clone();
             let rate_limiter = rate_limiter.clone();
+            let cert_error = cert_error.clone();
             async move {
                 // Order matters: take the per-host slot first, then the RPS
                 // token. That way the rate limiter only consumes a slot for
@@ -492,12 +502,22 @@ async fn run_scan_pipeline(
                         let scan_result = run_program(program, config).await;
                         let exec_result = match scan_result {
                             Ok(result) => Ok(result),
-                            Err(err) => Err(err.to_string()),
+                            // full_message() keeps the underlying cause (TLS
+                            // cert rejection, connection reset, decode failure)
+                            // that the runtime error's Display would hide.
+                            Err(err) => Err(err.full_message()),
                         };
                         (label.clone(), exec_result)
                     }
                     PreparedScript::Failed { label, error } => (label.clone(), Err(error.clone())),
                 };
+                if exec_result
+                    .as_ref()
+                    .err()
+                    .is_some_and(|msg| msg.to_ascii_lowercase().contains("certificate"))
+                {
+                    cert_error.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 let record = match &exec_result {
                     Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
                     Err(msg) => {
@@ -524,5 +544,15 @@ async fn run_scan_pipeline(
     // dropped `port_checks` from error records.
     for record in completed.into_iter().flatten() {
         scan_report.push_record(record);
+    }
+
+    // One-shot hint: if verification is on and at least one run failed on a bad
+    // certificate, point the user at --insecure (covers explicit https:// and
+    // bare hosts alike).
+    if base_config.verify_ssl && cert_error.load(std::sync::atomic::Ordering::Relaxed) {
+        ui::warn(
+            "a target's TLS certificate did not verify — pass --insecure to scan it \
+             (only if you accept the MITM / finding-injection risk)",
+        );
     }
 }

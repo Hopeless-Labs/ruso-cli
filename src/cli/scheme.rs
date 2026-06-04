@@ -6,70 +6,72 @@
 //! connection level — never downgrade to cleartext because of a certificate or
 //! HTTP-status error (that would be a security regression and, for a host whose
 //! only fault is an unverified cert, would wrongly abandon the TLS service).
+//!
+//! This module owns the resolution *policy*; the actual client (TLS, proxy,
+//! redirects) comes from [`ruso_runtime::build_client`] so probes behave
+//! exactly like the executor's real requests.
 
 use std::time::Duration;
 
 use crate::cli::args::DefaultScheme;
 use crate::cli::{targets, ui};
 
-/// Connect/total budget for a single scheme probe. Kept short so an
-/// unreachable port does not stall target resolution.
-const PROBE_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const PROBE_TOTAL_TIMEOUT: Duration = Duration::from_secs(8);
+/// Total budget for one scheme probe. Short so an unreachable port does not
+/// stall target resolution.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// Inputs controlling bare-host scheme resolution, bundled so the per-target
+/// resolver is not a wall of positional booleans.
+pub struct ResolveOptions<'a> {
+    /// Verify TLS certificates while probing (mirrors the scan's `--insecure`).
+    pub verify_ssl: bool,
+    /// Whether any script in the run makes HTTP requests. When false the scheme
+    /// never reaches the wire (socket-only scan) and the legacy `http://`
+    /// carrier is kept.
+    pub needs_http: bool,
+    /// Scheme applied when probing is disabled or no port answers.
+    pub default_scheme: DefaultScheme,
+    /// Run the https-first connectivity probe. When false, apply `default_scheme`.
+    pub probe: bool,
+    /// HTTP proxy to route probes through (mirrors the scan's `--proxy`).
+    pub proxy: Option<&'a str>,
+}
 
 /// Resolve each target into a base URL carrying an explicit scheme.
 ///
-/// - A target that already has a scheme is returned unchanged.
-/// - A bare host is resolved to `https://` or `http://`:
-///   - For a non-HTTP scan (`needs_http == false`) the scheme is irrelevant to
-///     socket probes, so the historical `http://` carrier is preserved (this
-///     also keeps a socket script's `{{scan_port}}` default at 80).
-///   - With `probe == false`, `default_scheme` is applied directly (no network).
-///   - Otherwise https is probed first, falling back to http only on a
-///     connection-level failure.
-pub async fn resolve_targets(
-    targets: Vec<String>,
-    verify_ssl: bool,
-    needs_http: bool,
-    default_scheme: DefaultScheme,
-    probe: bool,
-) -> Vec<String> {
+/// Targets that already have a scheme are returned unchanged; bare hosts are
+/// resolved per [`ResolveOptions`].
+pub async fn resolve_targets(targets: Vec<String>, opts: &ResolveOptions<'_>) -> Vec<String> {
     let mut resolved = Vec::with_capacity(targets.len());
     for target in targets {
-        resolved.push(resolve_one(&target, verify_ssl, needs_http, default_scheme, probe).await);
+        resolved.push(resolve_one(&target, opts).await);
     }
     resolved
 }
 
-async fn resolve_one(
-    target: &str,
-    verify_ssl: bool,
-    needs_http: bool,
-    default_scheme: DefaultScheme,
-    probe: bool,
-) -> String {
+async fn resolve_one(target: &str, opts: &ResolveOptions<'_>) -> String {
     // Already a URL: honor the user's explicit scheme/port untouched.
     if targets::is_url(target) {
         return target.to_string();
     }
     // Pure socket scan: the carrier scheme never reaches the wire, so keep the
     // legacy http:// form (and the implied port-80 `{{scan_port}}` default).
-    if !needs_http {
+    if !opts.needs_http {
         return format!("http://{target}");
     }
-    if !probe {
-        return format!("{}://{target}", default_scheme.as_str());
+    if !opts.probe {
+        return format!("{}://{target}", opts.default_scheme.as_str());
     }
 
     let https = format!("https://{target}");
     // Happy path: one probe, honoring the user's TLS-verify setting.
-    if probe_responds(&https, verify_ssl).await {
+    if probe_responds(&https, opts.verify_ssl, opts.proxy).await {
         return https;
     }
     // The verify-honoring probe failed. Re-probe ignoring the certificate to
     // tell a cert problem (443 is up) apart from a dead port.
-    if probe_responds(&https, false).await {
-        if verify_ssl {
+    if probe_responds(&https, false, opts.proxy).await {
+        if opts.verify_ssl {
             ui::warn(&format!(
                 "{target}: 443 is reachable but its TLS certificate did not verify; \
                  scanning over https — pass --insecure to complete the scan"
@@ -80,26 +82,21 @@ async fn resolve_one(
     }
     // 443 is genuinely unreachable; try cleartext http.
     let http = format!("http://{target}");
-    if probe_responds(&http, true).await {
+    if probe_responds(&http, true, opts.proxy).await {
         return http;
     }
     // Neither port answered (host down/filtered): fall back to the default.
-    format!("{}://{target}", default_scheme.as_str())
+    format!("{}://{target}", opts.default_scheme.as_str())
 }
 
 /// True if a GET to `url` elicits any HTTP response. Any status counts — we are
-/// probing reachability of the scheme/port, not the result. Redirects are not
-/// followed (a 3xx still proves the port answers).
-async fn probe_responds(url: &str, verify_ssl: bool) -> bool {
-    let client = match reqwest::Client::builder()
-        .connect_timeout(PROBE_CONNECT_TIMEOUT)
-        .timeout(PROBE_TOTAL_TIMEOUT)
-        .redirect(reqwest::redirect::Policy::none())
-        .danger_accept_invalid_certs(!verify_ssl)
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => return false,
+/// probing reachability of the scheme/port, not the result. The client mirrors
+/// the executor (proxy, TLS) but never follows redirects (a 3xx still proves
+/// the port answers).
+async fn probe_responds(url: &str, verify_ssl: bool, proxy: Option<&str>) -> bool {
+    let Ok(client) = ruso_runtime::build_client(Some(PROBE_TIMEOUT), false, verify_ssl, proxy)
+    else {
+        return false;
     };
     client.get(url).send().await.is_ok()
 }
@@ -108,14 +105,22 @@ async fn probe_responds(url: &str, verify_ssl: bool) -> bool {
 mod tests {
     use super::*;
 
+    /// `ResolveOptions` for an HTTP scan with probing on, verifying TLS, no proxy.
+    fn http_scan_opts() -> ResolveOptions<'static> {
+        ResolveOptions {
+            verify_ssl: true,
+            needs_http: true,
+            default_scheme: DefaultScheme::Https,
+            probe: true,
+            proxy: None,
+        }
+    }
+
     #[tokio::test]
     async fn url_targets_pass_through_unchanged() {
         let out = resolve_targets(
             vec!["https://a.example".into(), "http://b.example:8080".into()],
-            true,
-            true,
-            DefaultScheme::Https,
-            true,
+            &http_scan_opts(),
         )
         .await;
         assert_eq!(out, vec!["https://a.example", "http://b.example:8080"]);
@@ -124,14 +129,11 @@ mod tests {
     #[tokio::test]
     async fn socket_scan_keeps_http_carrier() {
         // needs_http == false -> bare host keeps the http:// carrier verbatim.
-        let out = resolve_targets(
-            vec!["db.internal:6379".into()],
-            true,
-            false,
-            DefaultScheme::Https,
-            true,
-        )
-        .await;
+        let opts = ResolveOptions {
+            needs_http: false,
+            ..http_scan_opts()
+        };
+        let out = resolve_targets(vec!["db.internal:6379".into()], &opts).await;
         assert_eq!(out, vec!["http://db.internal:6379"]);
     }
 
@@ -157,8 +159,7 @@ mod tests {
         });
 
         let target = format!("127.0.0.1:{port}");
-        let out =
-            resolve_targets(vec![target.clone()], true, true, DefaultScheme::Https, true).await;
+        let out = resolve_targets(vec![target.clone()], &http_scan_opts()).await;
         assert_eq!(out, vec![format!("http://{target}")]);
     }
 
@@ -166,19 +167,21 @@ mod tests {
     async fn probe_disabled_applies_default_scheme() {
         let https = resolve_targets(
             vec!["x.example".into()],
-            true,
-            true,
-            DefaultScheme::Https,
-            false,
+            &ResolveOptions {
+                probe: false,
+                ..http_scan_opts()
+            },
         )
         .await;
         assert_eq!(https, vec!["https://x.example"]);
+
         let http = resolve_targets(
             vec!["x.example".into()],
-            true,
-            true,
-            DefaultScheme::Http,
-            false,
+            &ResolveOptions {
+                probe: false,
+                default_scheme: DefaultScheme::Http,
+                ..http_scan_opts()
+            },
         )
         .await;
         assert_eq!(http, vec!["http://x.example"]);
