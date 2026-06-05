@@ -114,6 +114,21 @@ pub fn good(enabled: bool, text: &str) -> String {
     paint(enabled, "32", text)
 }
 
+/// ruso brand accent — Tailwind orange-500 (`#f97316`), matching ruso-frontend.
+pub const ACCENT: (u8, u8, u8) = (249, 115, 22);
+
+/// Bold text in a 24-bit RGB colour (banner gradient / accents).
+pub fn rgb_bold(enabled: bool, rgb: (u8, u8, u8), text: &str) -> String {
+    let (r, g, b) = rgb;
+    paint(enabled, &format!("1;38;2;{r};{g};{b}"), text)
+}
+
+/// Underlined text in a 24-bit RGB colour (a branded link).
+pub fn rgb_link(enabled: bool, rgb: (u8, u8, u8), text: &str) -> String {
+    let (r, g, b) = rgb;
+    paint(enabled, &format!("4;38;2;{r};{g};{b}"), text)
+}
+
 /// `[WARNING]` tag for stderr advisories (bold yellow).
 pub fn warn_tag(enabled: bool) -> String {
     paint(enabled, "1;33", "[WARNING]")

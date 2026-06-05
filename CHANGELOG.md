@@ -6,12 +6,19 @@ aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [0.1.0-beta.4] - 2026-06-05
 
+### Added
+- **Startup banner.** Every interactive invocation now prints the "ruso"
+  wordmark (figlet ANSI Shadow) in a ruso-orange vertical gradient, with the
+  version, GitHub, and registry links beneath it. It goes to stderr and only
+  when stderr is a terminal, so piped/CI output and the report on stdout stay
+  clean.
+
 ### Changed
-- **The multi-run scan summary is now a bordered table.** The old loose
-  `detected:`/`failed:` lines became a `detected / failed / skipped / clean`
-  table with the run breakdown (`N target × M scripts × K runs`) as a heading.
-  Counts are coloured by bucket when non-zero (detected/failed red, skipped
-  yellow, clean green) and dimmed at zero.
+- **The multi-run scan summary is now a per-target table.** Each target gets a
+  row of `detected / failed / skipped / clean` counts, followed by a footer with
+  the scan duration and run/target totals (`scan duration 1.4s · 3 runs across 3
+  targets`). Counts are coloured by bucket when non-zero (detected/failed red,
+  skipped yellow, clean green) and dimmed at zero.
 - **Warnings and errors print a styled `[WARNING]` / `[ERROR]` tag** (yellow /
   red on a TTY) instead of the lowercase `warning:` / `error:` prefix, matching
   the scan output. Colour follows stderr's own TTY/`NO_COLOR` state.

@@ -432,9 +432,29 @@ kept out of the console — use `--output json` / `csv` with `--report <path>`
 for the complete record. In `-v` mode each run also logs a status line:
 `[OK]` (green), `[SKIP] … (reason)` (yellow), or `[ERROR] … (msg)` (red).
 
+For a multi-run scan the human output ends with a **per-target summary table**
+and a duration footer:
+
+```text
+┌─────────────┬──────────┬────────┬─────────┬───────┐
+│ target      │ detected │ failed │ skipped │ clean │
+├─────────────┼──────────┼────────┼─────────┼───────┤
+│ protergo.id │        0 │     48 │       0 │     0 │
+└─────────────┴──────────┴────────┴─────────┴───────┘
+scan duration 1.4s · 48 runs across 1 target
+```
+
+Each count is coloured by bucket when non-zero (detected/failed red, skipped
+yellow, clean green) and dimmed at zero.
+
 Colour is applied only when stdout is a terminal; piped or redirected output
 (and any run with the `NO_COLOR` environment variable set) stays plain, so
 escape codes never pollute logs or `grep`.
+
+Every interactive invocation also prints a **startup banner** (the "ruso"
+wordmark plus version / GitHub / registry links) to stderr — shown only when
+stderr is a terminal, so piped/CI output and the report on stdout are
+unaffected. `NO_COLOR` drops its colour like everywhere else.
 
 The **json/csv report carries every metadata field** from the script
 `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`,

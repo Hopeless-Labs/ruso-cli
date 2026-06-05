@@ -2,6 +2,7 @@
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use serde::Serialize;
 
@@ -253,9 +254,10 @@ pub fn emit_scan_report(
     format: OutputFormat,
     report_path: Option<&Path>,
     verbose: bool,
+    duration: Duration,
 ) -> Result<(), String> {
     match format {
-        OutputFormat::Human => print_human(report, verbose),
+        OutputFormat::Human => print_human(report, verbose, duration),
         OutputFormat::Json => {
             let path = report_path.ok_or_else(|| "--report path is required".to_string())?;
             write_json_file(report, path)?;
@@ -421,7 +423,7 @@ fn print_status_line(status: &str, target: &str, label: &str, note: Option<&str>
     println!("{line}");
 }
 
-fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
+fn print_human(report: &ScanRunReport, verbose: bool, duration: Duration) -> Result<(), String> {
     let multi = report.summary.total_runs > 1;
 
     if !verbose {
@@ -436,7 +438,7 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
     }
 
     if multi && (report.summary.detected > 0 || report.summary.failed > 0 || verbose) {
-        print_summary_table(&report.summary, report.targets.len(), report.scripts.len());
+        print_summary_table(report, duration);
     }
 
     Ok(())
@@ -447,78 +449,163 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// Render the multi-run outcome as a small bordered table, e.g.
+/// Per-target run counts in the order targets were first seen.
+/// `counts` is `[detected, failed, skipped, clean]`, aligned with the table
+/// columns and their colourisers.
+struct TargetTally {
+    target: String,
+    counts: [usize; 4],
+}
+
+/// Which `counts` bucket a record falls in — mirrors `ScanRunReport::push_record`.
+fn bucket_index(r: &ScanResultRecord) -> usize {
+    if r.skipped {
+        2 // skipped
+    } else if r.detected {
+        0 // detected
+    } else if !r.success {
+        1 // failed
+    } else {
+        3 // clean
+    }
+}
+
+/// Aggregate every run into per-target tallies, preserving first-seen order.
+fn tally_by_target(report: &ScanRunReport) -> Vec<TargetTally> {
+    let mut order: Vec<String> = Vec::new();
+    let mut counts: std::collections::HashMap<String, [usize; 4]> =
+        std::collections::HashMap::new();
+    for r in &report.results {
+        let key = display_target(&r.target).to_string();
+        if !counts.contains_key(&key) {
+            order.push(key.clone());
+            counts.insert(key.clone(), [0; 4]);
+        }
+        counts.get_mut(&key).unwrap()[bucket_index(r)] += 1;
+    }
+    order
+        .into_iter()
+        .map(|target| {
+            let counts = counts[&target];
+            TargetTally { target, counts }
+        })
+        .collect()
+}
+
+/// Human-friendly elapsed time: `840ms`, `1.2s`, `2m03s`.
+fn format_duration(d: Duration) -> String {
+    if d.as_millis() < 1000 {
+        format!("{}ms", d.as_millis())
+    } else if d.as_secs() < 60 {
+        format!("{:.1}s", d.as_secs_f64())
+    } else {
+        let secs = d.as_secs();
+        format!("{}m{:02}s", secs / 60, secs % 60)
+    }
+}
+
+/// Render the multi-run outcome as a per-target table, e.g.
 ///
 /// ```text
-/// scan summary · 1 target × 48 scripts × 48 runs
-/// ┌──────────┬────┐
-/// │ detected │  0 │
-/// │ failed   │ 48 │
-/// │ skipped  │  0 │
-/// │ clean    │  0 │
-/// └──────────┴────┘
+/// ┌─────────────┬──────────┬────────┬─────────┬───────┐
+/// │ target      │ detected │ failed │ skipped │ clean │
+/// ├─────────────┼──────────┼────────┼─────────┼───────┤
+/// │ protergo.id │        0 │     48 │       0 │     0 │
+/// │ example.com │        2 │      1 │       0 │    45 │
+/// └─────────────┴──────────┴────────┴─────────┴───────┘
+/// scan duration 1.2s · 96 runs across 2 targets
 /// ```
 ///
 /// Each count is coloured by bucket when non-zero (detected/failed red,
 /// skipped yellow, clean green) and dimmed at zero, so the eye lands on what
 /// actually happened.
-fn print_summary_table(summary: &ScanSummary, targets: usize, scripts: usize) {
+fn print_summary_table(report: &ScanRunReport, duration: Duration) {
     let c = style::colors_enabled();
+    let tallies = tally_by_target(report);
 
-    // A `style` colouriser: `(enabled, text) -> painted`.
+    const HEAD: [&str; 4] = ["detected", "failed", "skipped", "clean"];
+    // A `style` colouriser: `(enabled, text) -> painted`. One per column,
+    // applied to a count cell when it is non-zero.
     type Colouriser = fn(bool, &str) -> String;
-    // (label, count, colouriser applied when the count is non-zero)
-    let rows: [(&str, usize, Colouriser); 4] = [
-        ("detected", summary.detected, style::alert),
-        ("failed", summary.failed, style::alert),
-        ("skipped", summary.skipped, style::caution),
-        ("clean", summary.clean, style::good),
-    ];
+    const PAINT: [Colouriser; 4] = [style::alert, style::alert, style::caution, style::good];
 
-    let label_w = rows.iter().map(|(l, ..)| l.len()).max().unwrap_or(0);
-    let count_w = rows
+    // Column widths: target column fits its widest value (or the header), each
+    // numeric column fits its header or widest count.
+    let target_w = tallies
         .iter()
-        .map(|(_, n, _)| n.to_string().len())
+        .map(|t| t.target.chars().count())
+        .chain(std::iter::once("target".len()))
         .max()
-        .unwrap_or(1)
-        .max(1);
+        .unwrap_or(6);
+    let num_w: [usize; 4] = std::array::from_fn(|i| {
+        let widest = tallies
+            .iter()
+            .map(|t| t.counts[i].to_string().len())
+            .max()
+            .unwrap_or(1);
+        HEAD[i].len().max(widest)
+    });
 
+    // Horizontal rule with a segment per column (content width + 1 pad each side).
     let rule = |left: char, mid: char, right: char| {
-        format!(
-            "{left}{}{mid}{}{right}",
-            "─".repeat(label_w + 2),
-            "─".repeat(count_w + 2),
-        )
+        let mut s = String::from(left);
+        s.push_str(&"─".repeat(target_w + 2));
+        for w in num_w {
+            s.push(mid);
+            s.push_str(&"─".repeat(w + 2));
+        }
+        s.push(right);
+        s
+    };
+
+    // A full row from an already-painted target cell and four count cells.
+    let row_line = |target_cell: String, count_cells: [String; 4]| {
+        let mut s = format!("│ {target_cell} ");
+        for cell in count_cells {
+            s.push_str(&format!("│ {cell} "));
+        }
+        s.push('│');
+        s
     };
 
     println!();
+    println!("{}", rule('┌', '┬', '┐'));
+    // Header row — pad plain text to the column width, then bold it.
+    let head_target = style::heading(c, &format!("{:<target_w$}", "target"));
+    let head_counts: [String; 4] =
+        std::array::from_fn(|i| style::heading(c, &format!("{:>w$}", HEAD[i], w = num_w[i])));
+    println!("{}", row_line(head_target, head_counts));
+    println!("{}", rule('├', '┼', '┤'));
+
+    for t in &tallies {
+        let target_cell = style::target(c, &format!("{:<target_w$}", t.target));
+        let count_cells: [String; 4] = std::array::from_fn(|i| {
+            let n = t.counts[i];
+            let cell = format!("{n:>w$}", w = num_w[i]);
+            if n > 0 {
+                PAINT[i](c, &cell)
+            } else {
+                style::dim(c, &cell)
+            }
+        });
+        println!("{}", row_line(target_cell, count_cells));
+    }
+    println!("{}", rule('└', '┴', '┘'));
+
+    let targets = tallies.len();
+    let total = report.summary.total_runs;
     println!(
         "{}",
-        style::heading(
+        style::dim(
             c,
             &format!(
-                "scan summary · {targets} target{} × {scripts} script{} × {} run{}",
+                "scan duration {} · {total} run{} across {targets} target{}",
+                format_duration(duration),
+                plural(total),
                 plural(targets),
-                plural(scripts),
-                summary.total_runs,
-                plural(summary.total_runs),
             )
         )
     );
-    println!("{}", rule('┌', '┬', '┐'));
-    for (label, n, paint) in rows {
-        // Pad the plain cells to the column width first, then colour — the
-        // escape bytes are added after padding so the borders stay aligned.
-        let label_cell = format!("{label:<label_w$}");
-        let count_cell = format!("{n:>count_w$}");
-        let (label_cell, count_cell) = if n > 0 {
-            (paint(c, &label_cell), paint(c, &count_cell))
-        } else {
-            (style::dim(c, &label_cell), style::dim(c, &count_cell))
-        };
-        println!("│ {label_cell} │ {count_cell} │");
-    }
-    println!("{}", rule('└', '┴', '┘'));
 }
 
 fn script_label(script: &str) -> String {
@@ -637,6 +724,34 @@ mod tests {
         r.detected = true;
         report.push_record(r);
         assert_eq!(report.summary.detected, 1);
+    }
+
+    #[test]
+    fn tally_groups_runs_per_target_in_first_seen_order() {
+        let mut report = empty_report();
+        // host-b first, then host-a, to prove order is preserved.
+        let mut detected = record("https://host-b", "s1");
+        detected.detected = true;
+        report.results.push(detected);
+        report.results.push(record("https://host-a", "s2")); // clean
+        let mut failed = record("https://host-b", "s3");
+        failed.success = false;
+        report.results.push(failed);
+
+        let tallies = tally_by_target(&report);
+        assert_eq!(tallies.len(), 2);
+        // display_target strips the scheme; host-b seen first.
+        assert_eq!(tallies[0].target, "host-b");
+        assert_eq!(tallies[0].counts, [1, 1, 0, 0]); // detected, failed
+        assert_eq!(tallies[1].target, "host-a");
+        assert_eq!(tallies[1].counts, [0, 0, 0, 1]); // clean
+    }
+
+    #[test]
+    fn duration_formats_by_magnitude() {
+        assert_eq!(format_duration(Duration::from_millis(840)), "840ms");
+        assert_eq!(format_duration(Duration::from_millis(1230)), "1.2s");
+        assert_eq!(format_duration(Duration::from_secs(123)), "2m03s");
     }
 
     #[test]

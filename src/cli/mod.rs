@@ -1,6 +1,7 @@
 //! CLI: argument parsing, scan orchestration, and terminal output.
 
 mod args;
+mod banner;
 mod cmd_registry;
 mod credentials;
 pub mod discover;
@@ -16,6 +17,7 @@ mod ui;
 use std::path::Path;
 use std::process;
 use std::sync::Arc;
+use std::time::Instant;
 
 use clap::Parser as _;
 
@@ -40,6 +42,13 @@ use self::throttle::{HostThrottle, RateLimiter};
 
 /// Binary entry: parse argv, init logging, dispatch subcommands.
 pub async fn run() -> process::ExitCode {
+    // Branding first, before clap can exit on `--help`/`--version`/no
+    // subcommand, so every interactive invocation shows it. The registry line
+    // reflects `$RUSO_REGISTRY_URL` (or the built-in default); a per-command
+    // `--registry` override isn't known this early. TTY-gated, so piped/CI runs
+    // and the report on stdout stay clean.
+    banner::print(&registry::resolve_base_url(None));
+
     let cli = Cli::parse();
     let verbose = cli.is_verbose();
     crate::logging::init(cli.log_filter(), verbose);
@@ -221,6 +230,7 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
     // exec runs no scheme probe, so no target was pre-warned about its cert.
     let cert_warned_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
 
+    let scan_started = Instant::now();
     run_scan_pipeline(
         &targets,
         &prepared_scripts,
@@ -237,8 +247,15 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
     .await;
 
     scan_report.finish();
+    let scan_duration = scan_started.elapsed();
 
-    if let Err(err) = emit_scan_report(&scan_report, args.output, args.report.as_deref(), verbose) {
+    if let Err(err) = emit_scan_report(
+        &scan_report,
+        args.output,
+        args.report.as_deref(),
+        verbose,
+        scan_duration,
+    ) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -404,6 +421,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         results: Vec::with_capacity(scan_targets.len() * prepared_scripts.len()),
     };
 
+    let scan_started = Instant::now();
     run_scan_pipeline(
         &scan_targets,
         &prepared_scripts,
@@ -420,8 +438,15 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     .await;
 
     scan_report.finish();
+    let scan_duration = scan_started.elapsed();
 
-    if let Err(err) = emit_scan_report(&scan_report, args.output, args.report.as_deref(), verbose) {
+    if let Err(err) = emit_scan_report(
+        &scan_report,
+        args.output,
+        args.report.as_deref(),
+        verbose,
+        scan_duration,
+    ) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
