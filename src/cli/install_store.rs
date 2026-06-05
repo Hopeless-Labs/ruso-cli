@@ -197,6 +197,13 @@ impl InstallStore {
     }
 
     /// Write a downloaded bytecode blob into the cache. Returns the path.
+    ///
+    /// The write is **atomic**: bytes land in a sibling temp file that is
+    /// then renamed over the final path (rename within one directory is
+    /// atomic on POSIX). A crash or short write therefore never leaves a
+    /// half-written `.bc`, and overwriting an existing entry either fully
+    /// succeeds or leaves the old entry untouched — so a failed re-download
+    /// can't destroy a working cache entry.
     pub fn write_bytecode(
         &self,
         namespace: &str,
@@ -210,9 +217,19 @@ impl InstallStore {
             source,
         })?;
         let path = dir.join(format!("{version}.bc"));
-        fs::write(&path, bytes).map_err(|source| InstallError::Write {
-            path: path.clone(),
+        // Unique per process so two concurrent installs of the same version
+        // can't clobber each other's temp file.
+        let tmp = dir.join(format!(".{version}.bc.{}.tmp", std::process::id()));
+        fs::write(&tmp, bytes).map_err(|source| InstallError::Write {
+            path: tmp.clone(),
             source,
+        })?;
+        fs::rename(&tmp, &path).map_err(|source| {
+            let _ = fs::remove_file(&tmp);
+            InstallError::Write {
+                path: path.clone(),
+                source,
+            }
         })?;
         Ok(path)
     }
@@ -287,11 +304,34 @@ pub async fn install(
     client: &RegistryClient,
     r#ref: &RegistryRef,
 ) -> Result<(Version, PathBuf), InstallError> {
+    install_with(store, client, r#ref, CacheMode::UseCache).await
+}
+
+/// Whether [`install`] may satisfy a request from the local cache.
+///
+/// `Force` re-fetches the matched version from the registry even when a
+/// usable copy is cached, but — unlike deleting the cache up front — it only
+/// replaces the entry once the download succeeds, so a failed `--force`
+/// re-download leaves the working cache intact.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheMode {
+    UseCache,
+    Force,
+}
+
+/// [`install`] with explicit control over cache reuse. See [`CacheMode`].
+pub async fn install_with(
+    store: &InstallStore,
+    client: &RegistryClient,
+    r#ref: &RegistryRef,
+    cache: CacheMode,
+) -> Result<(Version, PathBuf), InstallError> {
     // Gate every filesystem path built from this ref (read and write) behind
     // a slug check — a ref may come from an untrusted registry response.
     r#ref.validate_slugs()?;
-    if let Some(local) =
-        best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())?
+    if cache == CacheMode::UseCache
+        && let Some(local) =
+            best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())?
     {
         let path = store.bytecode_path(&r#ref.namespace, &r#ref.name, &local.to_string());
         // Only reuse a cached entry that still decodes with the current
@@ -383,6 +423,41 @@ mod tests {
         std::fs::write(&path, b"deadbeefdeadbeef").unwrap();
         assert!(!cached_bytecode_is_usable(&path));
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn write_bytecode_is_atomic_and_overwrites() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ruso-write-test-{nonce}"));
+        let store = InstallStore { root: root.clone() };
+
+        let path = store
+            .write_bytecode("alice", "demo", "1.0.0", b"first")
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"first");
+
+        // A second write replaces the contents in place...
+        let again = store
+            .write_bytecode("alice", "demo", "1.0.0", b"second")
+            .unwrap();
+        assert_eq!(again, path);
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+
+        // ...and leaves no stray temp file behind.
+        let dir = path.parent().unwrap();
+        let leftover: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("tmp"))
+            .collect();
+        assert!(leftover.is_empty(), "temp file left behind: {leftover:?}");
+
+        std::fs::remove_dir_all(&root).ok();
     }
 
     #[test]

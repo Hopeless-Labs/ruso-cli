@@ -6,6 +6,15 @@ aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [0.1.0-beta.4] - 2026-06-05
 
+### Fixed
+- `install --force` no longer destroys a working cache entry when the
+  re-download fails. It used to delete every cached `.bc` for the ref *before*
+  fetching, so a registry outage or network error left you with no script at
+  all. Now the download lands in a temp file and is atomically renamed over the
+  existing entry only on success — a failed `--force` leaves the cache
+  untouched. The write is atomic for normal installs too, so a crash mid-write
+  can't leave a half-written `.bc`.
+
 ### Changed
 - **`repeat` is now fully removed** from the DSL and the VM (via bumped
   ruso-script / ruso-runtime). It is no longer recognised syntax — a script

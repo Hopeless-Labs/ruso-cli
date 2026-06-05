@@ -266,7 +266,7 @@ does (e.g. compiled by an older toolchain) is re-fetched automatically, so
 
 | Flag | Effect |
 |------|--------|
-| `--force` | Re-download even if a matching version is already cached. Bust the cache for these refs first. |
+| `--force` | Re-download even if a matching version is already cached. The cached entry is replaced only once the new download succeeds — a failed `--force` (registry down, network error) leaves the existing cache intact. |
 | `--all-versions` | Install every non-yanked version of the ref (honouring `@<range>` if given). Newest-first so Ctrl-C mid-install leaves the most-useful versions on disk. |
 | `--registry <URL>` | Override the registry base URL. |
 

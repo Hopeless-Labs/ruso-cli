@@ -14,7 +14,7 @@ use crate::cli::args::{
 };
 use crate::cli::credentials::{self, Credentials};
 use crate::cli::discover::{discover_bytecode, discover_scripts};
-use crate::cli::install_store::{self, InstallStore, RegistryRef, parse_ref};
+use crate::cli::install_store::{self, CacheMode, InstallStore, RegistryRef, parse_ref};
 use crate::cli::registry::{
     CreateTokenRequest, PatchScriptRequest, RegistryClient, RegistryError, ScriptResponse,
     SearchParams, TokenSummary, resolve_base_url,
@@ -337,18 +337,13 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
                 continue;
             }
         };
-        if args.force {
-            // Bust the local cache by removing matching version files; the
-            // resolver then falls through to the network. Cheaper than
-            // adding a "force=true" knob to the resolver itself.
-            if let Err(err) = clear_cached(&store, &r#ref) {
-                ui::error(&err.to_string());
-                had_error = true;
-                continue;
-            }
-        }
+        let cache = if args.force {
+            CacheMode::Force
+        } else {
+            CacheMode::UseCache
+        };
         if args.all_versions {
-            match install_all_versions(&store, &client, &r#ref).await {
+            match install_all_versions(&store, &client, &r#ref, cache).await {
                 Ok(installed) => {
                     if installed.is_empty() {
                         ui::error(&format!(
@@ -374,7 +369,7 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
                 }
             }
         } else {
-            match install_store::install(&store, &client, &r#ref).await {
+            match install_store::install_with(&store, &client, &r#ref, cache).await {
                 Ok((version, path)) => {
                     println!(
                         "installed {}/{} @ {} -> {}",
@@ -406,6 +401,7 @@ async fn install_all_versions(
     store: &InstallStore,
     client: &RegistryClient,
     r#ref: &RegistryRef,
+    cache: CacheMode,
 ) -> Result<Vec<(semver::Version, std::path::PathBuf)>, String> {
     let script = client
         .show(&r#ref.namespace, &r#ref.name, r#ref.range.as_deref())
@@ -432,7 +428,7 @@ async fn install_all_versions(
     for v in candidates {
         let version_str = v.to_string();
         let cached = store.bytecode_path(&r#ref.namespace, &r#ref.name, &version_str);
-        let path = if cached.exists() {
+        let path = if cache == CacheMode::UseCache && cached.exists() {
             cached
         } else {
             let bytes = client
@@ -446,21 +442,6 @@ async fn install_all_versions(
         out.push((v, path));
     }
     Ok(out)
-}
-
-fn clear_cached(store: &InstallStore, r#ref: &RegistryRef) -> Result<(), io::Error> {
-    let dir = store.script_dir(&r#ref.namespace, &r#ref.name);
-    if !dir.exists() {
-        return Ok(());
-    }
-    for entry in std::fs::read_dir(&dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("bc") {
-            std::fs::remove_file(&path)?;
-        }
-    }
-    Ok(())
 }
 
 // ───────────────────────────── search ─────────────────────────────
