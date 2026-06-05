@@ -424,11 +424,17 @@ Idempotent — already-revoked tokens still return success.
 ## Report output (`--output json` / `csv` / `human`)
 
 **Human output is a one line per finding:** `[SEVERITY] <target> <title>`
-(e.g. `[CRITICAL] 127.0.0.1 Redis exposed without authentication`).
-The full metadata is intentionally kept out of the console — use
-`--output json` / `csv` with `--report <path>` for the complete record. In
-`-v` mode each run also logs a status line: `[OK]`, `[SKIP] … (reason)`, or
-`[ERROR] … (msg)`.
+(e.g. `[CRITICAL] 127.0.0.1 Redis exposed without authentication`). The
+`[SEVERITY]` tag is colour-coded by level (critical = magenta, high = red,
+medium = yellow, low = cyan, info = grey), the target is bold, and tags are
+padded to one column so targets line up. The full metadata is intentionally
+kept out of the console — use `--output json` / `csv` with `--report <path>`
+for the complete record. In `-v` mode each run also logs a status line:
+`[OK]` (green), `[SKIP] … (reason)` (yellow), or `[ERROR] … (msg)` (red).
+
+Colour is applied only when stdout is a terminal; piped or redirected output
+(and any run with the `NO_COLOR` environment variable set) stays plain, so
+escape codes never pollute logs or `grep`.
 
 The **json/csv report carries every metadata field** from the script
 `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`,

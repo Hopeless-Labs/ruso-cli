@@ -8,6 +8,7 @@ use serde::Serialize;
 use ruso_runtime::{ExecutionResult, PortCheck};
 
 use crate::cli::args::OutputFormat;
+use crate::cli::style;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanRunReport {
@@ -391,16 +392,33 @@ pub fn print_live_run(record: &ScanResultRecord, _multi_target: bool) {
     let target = display_target(&record.target);
     if record.skipped {
         let msg = record.skip_reason.as_deref().unwrap_or("port closed");
-        println!("[SKIP]  {target} {label} ({msg})");
+        print_status_line("SKIP", target, &label, Some(msg));
     } else if let Some(err) = &record.error {
-        println!("[ERROR] {target} {label} ({err})");
+        print_status_line("ERROR", target, &label, Some(err));
     } else if record.detected {
         for finding in &record.findings {
             print_finding_line(&record.target, finding);
         }
     } else {
-        println!("[OK]    {target} {label}");
+        print_status_line("OK", target, &label, None);
     }
+}
+
+/// One `[OK]/[SKIP]/[ERROR]` status row (verbose mode): coloured tag, bold
+/// target, dimmed script label, and an optional dimmed `(reason)`.
+fn print_status_line(status: &str, target: &str, label: &str, note: Option<&str>) {
+    let c = style::colors_enabled();
+    let mut line = format!(
+        "{} {}  {}",
+        style::status_tag(c, status),
+        style::target(c, target),
+        style::dim(c, label),
+    );
+    if let Some(note) = note {
+        line.push(' ');
+        line.push_str(&style::dim(c, &format!("({note})")));
+    }
+    println!("{line}");
 }
 
 fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
@@ -418,15 +436,25 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
     }
 
     if multi && (report.summary.detected > 0 || report.summary.failed > 0 || verbose) {
+        let c = style::colors_enabled();
         println!();
         println!(
-            "scan summary: {} run(s) ({} target(s) × {} script(s))",
-            report.summary.total_runs,
-            report.targets.len(),
-            report.scripts.len()
+            "{}",
+            style::heading(
+                c,
+                &format!(
+                    "scan summary: {} run(s) ({} target(s) × {} script(s))",
+                    report.summary.total_runs,
+                    report.targets.len(),
+                    report.scripts.len(),
+                )
+            )
         );
-        println!("  detected: {}", report.summary.detected);
-        println!("  failed:   {}", report.summary.failed);
+        println!(
+            "  detected: {}",
+            emphasise_count(c, report.summary.detected)
+        );
+        println!("  failed:   {}", emphasise_count(c, report.summary.failed));
         if report.summary.skipped > 0 {
             println!("  skipped:  {}", report.summary.skipped);
         }
@@ -436,6 +464,15 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+/// A count that matters (detected/failed) is red when non-zero, plain at zero.
+fn emphasise_count(enabled: bool, n: usize) -> String {
+    if n > 0 {
+        style::alert(enabled, &n.to_string())
+    } else {
+        n.to_string()
+    }
 }
 
 fn script_label(script: &str) -> String {
@@ -452,16 +489,17 @@ fn script_label(script: &str) -> String {
         .unwrap_or_else(|| script.to_string())
 }
 
-/// One readable line per finding: `[SEVERITY] target title`. The full
-/// metadata (description, cve/cwe, cvss, mitigation, evidence, version,
-/// family, tags, …) is written to the `--report` json/csv file, not the
-/// console log.
+/// One readable line per finding: a colour-coded `[SEVERITY]` tag, the bold
+/// target, then the finding title. The full metadata (description, cve/cwe,
+/// cvss, mitigation, evidence, version, family, tags, …) is written to the
+/// `--report` json/csv file, not the console log.
 fn print_finding_line(target: &str, finding: &FindingRecord) {
+    let c = style::colors_enabled();
     println!(
-        "[{}] {} {}",
-        finding.severity.to_uppercase(),
-        display_target(target),
-        finding.name
+        "{} {}  {}",
+        style::severity_tag(c, &finding.severity),
+        style::target(c, display_target(target)),
+        finding.name,
     );
 }
 

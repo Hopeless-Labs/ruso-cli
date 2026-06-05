@@ -8,6 +8,7 @@ mod install_store;
 pub mod registry;
 mod report;
 mod scheme;
+mod style;
 mod targets;
 mod throttle;
 mod ui;

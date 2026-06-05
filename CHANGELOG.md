@@ -6,6 +6,15 @@ aims to follow [Semantic Versioning](https://semver.org/).
 
 ## [0.1.0-beta.4] - 2026-06-05
 
+### Changed
+- **Human scan output is now colour-coded.** The `[SEVERITY]` finding tag is
+  coloured by level (critical = magenta, high = red, medium = yellow, low =
+  cyan, info = grey), the target is bold, secondary text (script label, skip/
+  error reason) is dimmed, and tags are padded to a single column so targets
+  line up. Verbose `[OK]`/`[SKIP]`/`[ERROR]` rows and the multi-run summary are
+  coloured too. Colour auto-disables when stdout is not a terminal or
+  `NO_COLOR` is set, so piped/redirected output stays plain.
+
 ### Fixed
 - `install --force` no longer destroys a working cache entry when the
   re-download fails. It used to delete every cached `.bc` for the ref *before*
