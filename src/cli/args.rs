@@ -367,10 +367,17 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = 0, value_name = "RPS")]
     pub rps: u32,
 
-    /// Wall-clock budget per script run. Hostile or buggy bytecode (huge
-    /// `repeat`, deep loops) cannot run beyond this. Default `5m`.
+    /// Wall-clock budget per script run. Hostile or buggy bytecode (deep
+    /// loops, long `sleep`s) cannot run beyond this. Default `5m`.
     #[arg(long, default_value = "5m", value_name = "DURATION")]
     pub script_timeout: String,
+
+    /// Auto-retry an HTTP probe that fails with a transient transport error
+    /// (connection reset, connect/read timeout) up to N times. `0` disables. A
+    /// probe with its own `retry` directive is exempt — the script controls
+    /// retries there. Default `2`.
+    #[arg(long, default_value_t = 2, value_name = "N")]
+    pub retries: u32,
 
     /// Report format: human prints findings to stdout; json/csv require --report
     #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
@@ -447,6 +454,12 @@ pub struct ExecArgs {
     /// Wall-clock budget per script run. Default `5m`.
     #[arg(long, default_value = "5m", value_name = "DURATION")]
     pub script_timeout: String,
+
+    /// Auto-retry an HTTP probe that fails with a transient transport error
+    /// (connection reset, connect/read timeout) up to N times. `0` disables. A
+    /// probe with its own `retry` directive is exempt. Default `2`.
+    #[arg(long, default_value_t = 2, value_name = "N")]
+    pub retries: u32,
 
     #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
     pub output: OutputFormat,
@@ -577,6 +590,7 @@ pub fn executor_config_from_exec(args: &ExecArgs) -> Result<ExecutorConfig, Exit
         verify_ssl: !args.insecure,
         proxy: args.proxy.clone(),
         max_script_duration,
+        http_retries: args.retries,
     })
 }
 
@@ -603,6 +617,7 @@ pub fn executor_base_config(args: &ScanArgs) -> Result<ExecutorConfig, ExitCode>
         verify_ssl: !args.insecure,
         proxy: args.proxy.clone(),
         max_script_duration,
+        http_retries: args.retries,
     })
 }
 

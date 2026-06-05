@@ -128,6 +128,7 @@ ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
 | `--no-follow-redirects` | HTTP |
 | `--insecure` | Disable TLS certificate verification. Defaults to **off** (TLS *is* verified); opt-in only for environments where you accept MITM and finding-injection risk. Emits a runtime warning when active. If a scan run fails because a target's certificate did not verify, a one-shot hint suggests `--insecure` (covers bare hosts and explicit `https://` alike). HTTP `verify_ssl` in the script still overrides per probe |
 | `--proxy` | HTTP proxy |
+| `--retries` | Auto-retry an HTTP probe that fails with a **transient transport error** — connection reset, connect/read timeout — up to N times (default `2`; `0` disables). A received HTTP response (any status) and a TLS-certificate rejection are never retried. A probe with its own `retry` directive opts out — the script's count wins. Helpful against CDN/edge resets under bursty scans. |
 | `--script-timeout` | Per-script wall-clock budget (default `5m`) |
 | `--concurrency` | Parallel (target × script) runs (default `16`) |
 | `--max-per-host` | Cap concurrent in-flight scans against a single host (default `0` = disabled; only `--concurrency` applies). Prevents a high `-c` from piling many connections onto one sensitive target while still allowing wide parallelism across distinct hosts. |
