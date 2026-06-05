@@ -4,6 +4,34 @@ All notable changes to the `ruso` CLI are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.3] - 2026-06-05
+
+### Added
+- `--retries <N>` (default `2`): auto-retry an HTTP probe that fails with a
+  *transient* transport error — connection reset, connect/read timeout — with a
+  short backoff. A received HTTP response (any status) and a TLS-certificate
+  rejection are never retried. A probe with its own `retry` directive opts out,
+  so author-controlled re-sends and the automatic retry never multiply. Helps
+  against CDN/edge resets under bursty scans.
+
+### Changed
+- **Failures report the real cause.** A failed run now shows the underlying
+  error chain (`http error: error sending request for url (…): operation timed
+  out`) instead of a bare `error sending request`.
+- The bare-host certificate warning, and a one-shot `--insecure` hint when a run
+  fails on certificate verification, now print at default verbosity — and the
+  hint covers explicitly-schemed `https://` targets, not just bare hosts.
+- The bare-host scheme probe now uses the runtime's HTTP client, so it honors
+  `--proxy` and matches the executor's TLS behaviour.
+- **DSL: `repeat N … end` was removed** (via the ruso-script bump). A script
+  using it now fails at compile with a hint to use `for` / `retry`. Previously
+  compiled bytecode still runs.
+
+### Fixed
+- A cached `<ns>/<name>/<ver>.bc` that no longer decodes with the current
+  runtime is re-fetched instead of failing with `corrupt bytecode` — the install
+  cache self-heals.
+
 ## [0.1.0-beta.2] - 2026-06-05
 
 ### Added
@@ -59,5 +87,6 @@ First public beta.
   A hostile or `--registry`-pointed server can no longer return a crafted
   `namespace` (`../…`) that writes downloaded bytecode outside the cache.
 
+[0.1.0-beta.3]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.1
