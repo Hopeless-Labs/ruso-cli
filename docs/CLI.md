@@ -258,7 +258,10 @@ ruso install a/x b/y c/z@~1.4                            # multiple refs
 Resolves the best non-yanked version matching the range (newest wins;
 no range = newest overall) and writes it to
 `$RUSO_HOME/scripts/<ns>/<name>/<version>.bc` (default
-`~/.ruso/scripts/...`). Subsequent runs reuse the cache.
+`~/.ruso/scripts/...`). Subsequent runs reuse the cache. A cached entry is
+reused only if it still decodes with the current runtime; one that no longer
+does (e.g. compiled by an older toolchain) is re-fetched automatically, so
+`--force` is needed only to refresh an entry that is still valid.
 
 | Flag | Effect |
 |------|--------|
