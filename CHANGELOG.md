@@ -4,6 +4,17 @@ All notable changes to the `ruso` CLI are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 aims to follow [Semantic Versioning](https://semver.org/).
 
+## [0.1.0-beta.4] - 2026-06-05
+
+### Changed
+- **`repeat` is now fully removed** from the DSL and the VM (via bumped
+  ruso-script / ruso-runtime). It is no longer recognised syntax — a script
+  using it gets a plain parse error rather than the beta.3 migration hint — and
+  the `Repeat` bytecode opcode is gone (opcode 18 reserved). Bytecode that does
+  not use `repeat` is byte-identical, so this is not a format change: no version
+  bump, and every published script keeps working. Use `for` to iterate or
+  `retry` to re-send.
+
 ## [0.1.0-beta.3] - 2026-06-05
 
 ### Added
@@ -87,6 +98,7 @@ First public beta.
   A hostile or `--registry`-pointed server can no longer return a crafted
   `namespace` (`../…`) that writes downloaded bytecode outside the cache.
 
+[0.1.0-beta.4]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.4
 [0.1.0-beta.3]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.3
 [0.1.0-beta.2]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.2
 [0.1.0-beta.1]: https://github.com/Hopeless-Labs/ruso-cli/releases/tag/v0.1.0-beta.1
