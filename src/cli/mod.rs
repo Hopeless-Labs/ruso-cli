@@ -36,7 +36,7 @@ use self::cmd_registry::{ScriptInput, resolve_bytecode_input, resolve_script_inp
 use self::discover::bytecode_path_for_script;
 use self::report::{
     ScanResultRecord, ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report,
-    print_live_run, validate_report_options,
+    print_finding_line, print_live_run, validate_report_options,
 };
 use self::throttle::{HostThrottle, RateLimiter};
 
@@ -52,10 +52,12 @@ pub async fn run() -> process::ExitCode {
     let cli = Cli::parse();
     let verbose = cli.is_verbose();
     crate::logging::init(cli.log_filter(), verbose);
+    // Spinners self-gate on this: dormant when verbose (logs are the progress).
+    ui::init(verbose);
 
     match cli.command {
-        Command::Validate(args) => cmd_validate(args, verbose),
-        Command::Compile(args) => cmd_compile(args, verbose),
+        Command::Validate(args) => cmd_validate(args),
+        Command::Compile(args) => cmd_compile(args),
         Command::Exec(args) => cmd_exec(args, verbose).await,
         Command::Scan(args) => cmd_scan(args, verbose).await,
         Command::Login(args) => cmd_registry::cmd_login(args).await,
@@ -76,7 +78,7 @@ pub async fn run() -> process::ExitCode {
     }
 }
 
-fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
+fn cmd_validate(args: args::ValidateArgs) -> process::ExitCode {
     let scripts = match self::discover::discover_scripts(Path::new(&args.script.script)) {
         Ok(scripts) => scripts,
         Err(err) => {
@@ -85,7 +87,7 @@ fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    let _spinner = (!verbose).then(|| ui::Spinner::start("validating"));
+    let _spinner = ui::Spinner::start("validating");
 
     for path in &scripts {
         let source = match load_script(path) {
@@ -102,7 +104,7 @@ fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
     process::ExitCode::SUCCESS
 }
 
-fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
+fn cmd_compile(args: args::CompileArgs) -> process::ExitCode {
     let scripts = match self::discover::discover_scripts(Path::new(&args.script.script)) {
         Ok(scripts) => scripts,
         Err(err) => {
@@ -111,7 +113,7 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    let _spinner = (!verbose).then(|| ui::Spinner::start("compiling"));
+    let _spinner = ui::Spinner::start("compiling");
 
     for path in &scripts {
         let program = match load_program(path) {
@@ -227,23 +229,21 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         .map(|(label, bytecode)| PreparedScript::Ready { label, bytecode })
         .collect();
 
-    // exec runs no scheme probe, so no target was pre-warned about its cert.
-    let cert_warned_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
-
     let scan_started = Instant::now();
-    run_scan_pipeline(
-        &targets,
-        &prepared_scripts,
-        &base_config,
-        args.concurrency.max(1),
-        HostThrottle::new(args.max_per_host),
-        RateLimiter::per_second(args.rps),
-        args.output,
+    ScanPipeline {
+        targets: &targets,
+        prepared: &prepared_scripts,
+        base_config: &base_config,
+        concurrency: args.concurrency.max(1),
+        host_throttle: HostThrottle::new(args.max_per_host),
+        rate_limiter: RateLimiter::per_second(args.rps),
+        output: args.output,
         verbose,
         multi_target,
-        &mut scan_report,
-        &cert_warned_targets,
-    )
+        // exec runs no scheme probe; targets are used verbatim.
+        resolver: None,
+    }
+    .run(&mut scan_report)
     .await;
 
     scan_report.finish();
@@ -383,21 +383,16 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
             .any(|kind| matches!(kind, ruso_runtime::ProbeKind::Http(_))),
         PreparedScript::Failed { .. } => false,
     });
-    let resolved = scheme::resolve_targets(
-        scan_targets,
-        &scheme::ResolveOptions {
-            verify_ssl: base_config.verify_ssl,
-            needs_http,
-            default_scheme: args.default_scheme,
-            probe: !args.no_scheme_probe,
-            proxy: args.proxy.as_deref(),
-        },
-    )
-    .await;
-    // Targets the scheme probe already cert-warned about, so the post-scan
-    // hint below doesn't repeat the same `--insecure` advice for them.
-    let cert_warned_targets = resolved.cert_warned;
-    let scan_targets = resolved.urls;
+    // Bare-host scheme resolution is folded into the scan pipeline (resolved
+    // lazily, once per target) so it overlaps with scanning instead of blocking
+    // it as a separate up-front phase.
+    let resolve_opts = scheme::ResolveOptions {
+        verify_ssl: base_config.verify_ssl,
+        needs_http,
+        default_scheme: args.default_scheme,
+        probe: !args.no_scheme_probe,
+        proxy: args.proxy.as_deref(),
+    };
 
     let script_labels: Vec<String> = prepared_scripts
         .iter()
@@ -422,19 +417,19 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     };
 
     let scan_started = Instant::now();
-    run_scan_pipeline(
-        &scan_targets,
-        &prepared_scripts,
-        &base_config,
-        args.concurrency.max(1),
-        HostThrottle::new(args.max_per_host),
-        RateLimiter::per_second(args.rps),
-        args.output,
+    ScanPipeline {
+        targets: &scan_targets,
+        prepared: &prepared_scripts,
+        base_config: &base_config,
+        concurrency: args.concurrency.max(1),
+        host_throttle: HostThrottle::new(args.max_per_host),
+        rate_limiter: RateLimiter::per_second(args.rps),
+        output: args.output,
         verbose,
         multi_target,
-        &mut scan_report,
-        &cert_warned_targets,
-    )
+        resolver: Some(resolve_opts),
+    }
+    .run(&mut scan_report)
     .await;
 
     scan_report.finish();
@@ -476,140 +471,183 @@ pub(crate) fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
     hex_to_bytes(text).map_err(|err| err.to_string())
 }
 
-/// Fan out (target × script) work over a bounded concurrency pool and feed
-/// results back into `scan_report` in (target, script) order.
-///
-/// `buffer_unordered(N)` runs up to N futures concurrently and yields results
-/// as they finish, so live output may interleave when N > 1. The final
-/// `scan_report.results` list is re-sorted by the work index to keep file
-/// output (json/csv) deterministic regardless of completion order.
-#[allow(clippy::too_many_arguments)]
-async fn run_scan_pipeline(
-    targets: &[String],
-    prepared: &[PreparedScript],
-    base_config: &ruso_runtime::ExecutorConfig,
+/// One streaming, pipelined scan run. Bundling the inputs into a struct keeps
+/// the runner and its two call sites (`scan`, `exec`) free of a long positional
+/// argument list.
+struct ScanPipeline<'a> {
+    targets: &'a [String],
+    prepared: &'a [PreparedScript],
+    base_config: &'a ruso_runtime::ExecutorConfig,
     concurrency: usize,
     host_throttle: HostThrottle,
     rate_limiter: RateLimiter,
     output: OutputFormat,
     verbose: bool,
     multi_target: bool,
-    scan_report: &mut ScanRunReport,
-    // Targets the scheme probe already cert-warned about; their cert failures
-    // don't re-trigger the post-scan `--insecure` hint. `cmd_exec` passes an
-    // empty set (no scheme probe runs there).
-    cert_warned_targets: &std::collections::HashSet<String>,
-) {
-    use futures::stream::{self, StreamExt};
+    /// Scheme resolution for bare-host targets (`scan`). `None` uses each
+    /// target verbatim (`exec`).
+    resolver: Option<scheme::ResolveOptions<'a>>,
+}
 
-    // Build the full (target_idx, script_idx) work plan up-front so results
-    // can be reattached to their slot for deterministic ordering.
-    let mut jobs: Vec<(usize, usize)> = Vec::with_capacity(targets.len() * prepared.len());
-    for (ti, _) in targets.iter().enumerate() {
-        for (si, _) in prepared.iter().enumerate() {
-            jobs.push((ti, si));
-        }
-    }
+impl ScanPipeline<'_> {
+    /// Fan out (target × script) work over a bounded concurrency pool, feeding
+    /// results into `scan_report`. Each target's scheme is resolved lazily and
+    /// once (memoised), so resolution overlaps with scanning instead of running
+    /// as a separate up-front phase. Findings stream live as they are found.
+    async fn run(self, scan_report: &mut ScanRunReport) {
+        use futures::stream::{self, StreamExt};
+        use std::sync::atomic::Ordering;
+        use std::sync::{Arc as SharedArc, Mutex};
+        use tokio::sync::OnceCell;
 
-    let mut completed: Vec<Option<ScanResultRecord>> = (0..jobs.len()).map(|_| None).collect();
+        let ScanPipeline {
+            targets,
+            prepared,
+            base_config,
+            concurrency,
+            host_throttle,
+            rate_limiter,
+            output,
+            verbose,
+            multi_target,
+            resolver,
+        } = self;
 
-    // Resolved targets whose runs failed on TLS certificate verification, so we
-    // can surface the `--insecure` hint once after the scan. Keyed by target so
-    // we can skip the ones the scheme probe already warned about, while still
-    // covering explicitly-schemed `https://` targets that bypass that probe.
-    let cert_failed_targets = std::sync::Arc::new(std::sync::Mutex::new(
-        std::collections::HashSet::<String>::new(),
-    ));
-
-    let mut stream = stream::iter(jobs.into_iter().enumerate())
-        .map(|(idx, (ti, si))| {
-            let target = targets[ti].clone();
-            let prepared = &prepared[si];
-            let config = executor_config_for_target(base_config, &target);
-            let host_throttle = host_throttle.clone();
-            let rate_limiter = rate_limiter.clone();
-            let cert_failed_targets = cert_failed_targets.clone();
-            async move {
-                // Order matters: take the per-host slot first, then the RPS
-                // token. That way the rate limiter only consumes a slot for
-                // a run that is actually about to start, instead of burning
-                // budget on jobs still queued behind a host's permit.
-                let host = throttle::host_key(&target);
-                let _host_permit = host_throttle.acquire(&host).await;
-                rate_limiter.acquire().await;
-                let (label, exec_result) = match prepared {
-                    PreparedScript::Ready { label, bytecode } => {
-                        let program = Arc::clone(bytecode);
-                        let scan_result = run_program(program, config).await;
-                        let exec_result = match scan_result {
-                            Ok(result) => Ok(result),
-                            // full_message() keeps the underlying cause (TLS
-                            // cert rejection, connection reset, decode failure)
-                            // that the runtime error's Display would hide.
-                            Err(err) => Err(err.full_message()),
-                        };
-                        (label.clone(), exec_result)
-                    }
-                    PreparedScript::Failed { label, error } => (label.clone(), Err(error.clone())),
-                };
-                if exec_result
-                    .as_ref()
-                    .err()
-                    .is_some_and(|msg| msg.to_ascii_lowercase().contains("certificate"))
-                {
-                    cert_failed_targets.lock().unwrap().insert(target.clone());
-                }
-                let record = match &exec_result {
-                    Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
-                    Err(msg) => {
-                        ScanResultRecord::from_error(target.clone(), label.clone(), msg.clone())
-                    }
-                };
-                (idx, record)
+        // (target_idx, script_idx) work plan; results reattach to `completed`
+        // by index so json/csv output stays deterministic regardless of
+        // completion order.
+        let mut jobs: Vec<(usize, usize)> = Vec::with_capacity(targets.len() * prepared.len());
+        for ti in 0..targets.len() {
+            for si in 0..prepared.len() {
+                jobs.push((ti, si));
             }
-        })
-        .buffer_unordered(concurrency);
-
-    // In verbose mode each run streams its own `[OK]/[SKIP]/[ERROR]` line, so a
-    // spinner would fight them. Otherwise the loop is silent until the summary,
-    // so show a progress spinner (`⠋ scanning 12/48`) over the work. Dropped
-    // before the post-scan warnings / summary so it never overwrites them.
-    let progress = (!verbose).then(|| ui::Spinner::with_progress("scanning", completed.len()));
-
-    while let Some((idx, record)) = stream.next().await {
-        if output == OutputFormat::Human && verbose {
-            print_live_run(&record, multi_target);
         }
-        completed[idx] = Some(record);
-        if let Some((_, counter)) = &progress {
-            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let total = jobs.len();
+        let mut completed: Vec<Option<ScanResultRecord>> = (0..total).map(|_| None).collect();
+
+        // One scheme-resolution cell per target so its many script jobs probe it
+        // exactly once (the first job resolves; the rest await the same cell).
+        let cells: SharedArc<Vec<OnceCell<String>>> =
+            SharedArc::new((0..targets.len()).map(|_| OnceCell::new()).collect());
+        // Deferred resolution cert warnings + the URLs they cover, and the URLs
+        // whose runs actually failed on a bad cert (for the post-scan hint).
+        let warnings = SharedArc::new(Mutex::new(Vec::<String>::new()));
+        let cert_warned = SharedArc::new(Mutex::new(std::collections::HashSet::<String>::new()));
+        let cert_failed = SharedArc::new(Mutex::new(std::collections::HashSet::<String>::new()));
+
+        let mut stream = stream::iter(jobs.into_iter().enumerate())
+            .map(|(idx, (ti, si))| {
+                let raw_target = targets[ti].clone();
+                let prepared = &prepared[si];
+                let host_throttle = host_throttle.clone();
+                let rate_limiter = rate_limiter.clone();
+                let cells = cells.clone();
+                let warnings = warnings.clone();
+                let cert_warned = cert_warned.clone();
+                let cert_failed = cert_failed.clone();
+                async move {
+                    // Resolve this target's scheme once (memoised). `exec` has
+                    // no resolver and uses the target verbatim.
+                    let url = cells[ti]
+                        .get_or_init(|| async {
+                            match resolver {
+                                Some(opts) => {
+                                    let (url, warning) =
+                                        scheme::resolve_one(&raw_target, &opts).await;
+                                    if let Some(message) = warning {
+                                        warnings.lock().unwrap().push(message);
+                                        cert_warned.lock().unwrap().insert(url.clone());
+                                    }
+                                    url
+                                }
+                                None => raw_target.clone(),
+                            }
+                        })
+                        .await
+                        .clone();
+
+                    // Order matters: take the per-host slot first, then the RPS
+                    // token, so the limiter only spends budget on a run about to
+                    // start, not one still queued behind a host's permit.
+                    let config = executor_config_for_target(base_config, &url);
+                    let host = throttle::host_key(&url);
+                    let _host_permit = host_throttle.acquire(&host).await;
+                    rate_limiter.acquire().await;
+                    let (label, exec_result) = match prepared {
+                        PreparedScript::Ready { label, bytecode } => {
+                            let program = Arc::clone(bytecode);
+                            // full_message() keeps the underlying cause (TLS cert
+                            // rejection, connection reset, decode failure) the
+                            // runtime error's Display would otherwise hide.
+                            let exec_result = match run_program(program, config).await {
+                                Ok(result) => Ok(result),
+                                Err(err) => Err(err.full_message()),
+                            };
+                            (label.clone(), exec_result)
+                        }
+                        PreparedScript::Failed { label, error } => {
+                            (label.clone(), Err(error.clone()))
+                        }
+                    };
+                    if exec_result
+                        .as_ref()
+                        .err()
+                        .is_some_and(|msg| msg.to_ascii_lowercase().contains("certificate"))
+                    {
+                        cert_failed.lock().unwrap().insert(url.clone());
+                    }
+                    let record = match &exec_result {
+                        Ok(r) => ScanResultRecord::from_execution(url.clone(), label.clone(), r),
+                        Err(msg) => {
+                            ScanResultRecord::from_error(url.clone(), label.clone(), msg.clone())
+                        }
+                    };
+                    (idx, record)
+                }
+            })
+            .buffer_unordered(concurrency);
+
+        // Progress spinner over the work (`⠋ scanning 12/48 (25%)`); dormant in
+        // verbose / non-TTY. Live output (findings, verbose status rows) is
+        // printed through `suspend` so it never collides with a spinner frame.
+        let (spinner, counter) = ui::Spinner::with_progress("scanning", total);
+        while let Some((idx, record)) = stream.next().await {
+            if output == OutputFormat::Human {
+                spinner.suspend(|| {
+                    if verbose {
+                        print_live_run(&record, multi_target);
+                    } else if record.detected {
+                        for finding in &record.findings {
+                            print_finding_line(&record.target, finding);
+                        }
+                    }
+                });
+            }
+            completed[idx] = Some(record);
+            counter.fetch_add(1, Ordering::Relaxed);
         }
-    }
-    drop(progress);
+        drop(spinner);
 
-    // Push records back in their original (target, script) slot order. Each
-    // record already carries the right `success`/`detected`/`error` shape;
-    // `push_record` updates the summary counters in one place — earlier
-    // revisions branched into a second `push_result` path that re-built the
-    // record from an `Err` string, which double-counted some failures and
-    // dropped `port_checks` from error records.
-    for record in completed.into_iter().flatten() {
-        scan_report.push_record(record);
-    }
+        // Now that the spinner is gone, emit the deferred resolution warnings.
+        for message in warnings.lock().unwrap().drain(..) {
+            ui::warn(&message);
+        }
 
-    // One-shot hint: if verification is on and a run failed on a bad
-    // certificate for a target the scheme probe did *not* already warn about
-    // (e.g. an explicitly-schemed `https://` target), point the user at
-    // --insecure. Targets the probe warned about are skipped so the same advice
-    // isn't printed twice.
-    if base_config.verify_ssl {
-        let failed = cert_failed_targets.lock().unwrap();
-        let unwarned = failed.difference(cert_warned_targets).next().is_some();
-        if unwarned {
-            ui::warn(
-                "a target's TLS certificate did not verify — pass --insecure to scan it \
-                 (only if you accept the MITM / finding-injection risk)",
-            );
+        for record in completed.into_iter().flatten() {
+            scan_report.push_record(record);
+        }
+
+        // One-shot hint for a cert failure on a target the resolver did *not*
+        // already warn about (e.g. an explicitly-schemed `https://` target).
+        if base_config.verify_ssl {
+            let failed = cert_failed.lock().unwrap();
+            let warned = cert_warned.lock().unwrap();
+            if failed.difference(&warned).next().is_some() {
+                ui::warn(
+                    "a target's TLS certificate did not verify — pass --insecure to scan it \
+                     (only if you accept the MITM / finding-injection risk)",
+                );
+            }
         }
     }
 }

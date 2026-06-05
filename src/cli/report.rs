@@ -426,17 +426,9 @@ fn print_status_line(status: &str, target: &str, label: &str, note: Option<&str>
 fn print_human(report: &ScanRunReport, verbose: bool, duration: Duration) -> Result<(), String> {
     let multi = report.summary.total_runs > 1;
 
-    if !verbose {
-        // One line per finding: `[SEVERITY] target title`. Only detected runs
-        // carry findings, so non-detected runs stay silent here. Full metadata
-        // is in the --report file.
-        for record in &report.results {
-            for finding in &record.findings {
-                print_finding_line(&record.target, finding);
-            }
-        }
-    }
-
+    // Findings (and verbose status rows) are streamed live during the scan via
+    // `print_finding_line` / `print_live_run`, so nothing per-run is printed
+    // here — only the closing summary table.
     if multi && (report.summary.detected > 0 || report.summary.failed > 0 || verbose) {
         print_summary_table(report, duration);
     }
@@ -626,7 +618,7 @@ fn script_label(script: &str) -> String {
 /// target, then the finding title. The full metadata (description, cve/cwe,
 /// cvss, mitigation, evidence, version, family, tags, …) is written to the
 /// `--report` json/csv file, not the console log.
-fn print_finding_line(target: &str, finding: &FindingRecord) {
+pub fn print_finding_line(target: &str, finding: &FindingRecord) {
     let c = style::colors_enabled();
     println!(
         "{} {}  {}",

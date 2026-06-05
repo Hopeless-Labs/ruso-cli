@@ -1,14 +1,41 @@
 //! Simple user-facing stderr output (spinner and errors).
 
+use std::future::Future;
 use std::io::{IsTerminal, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::cli::style;
 
 const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// Set once from the top-level `--verbose` flag. Spinners stay dormant when
+/// verbose, because the debug-log stream on stderr would garble them — the
+/// per-run log lines are the progress indicator in that mode.
+static VERBOSE: AtomicBool = AtomicBool::new(false);
+
+/// Record the verbosity so every spinner can self-gate on it. Call once at
+/// startup.
+pub fn init(verbose: bool) {
+    VERBOSE.store(verbose, Ordering::Relaxed);
+}
+
+/// Spinners animate only on an interactive, non-verbose stderr.
+fn spinners_suppressed() -> bool {
+    VERBOSE.load(Ordering::Relaxed) || !std::io::stderr().is_terminal()
+}
+
+/// Run `fut` under a labelled spinner, clearing the spinner before returning so
+/// the caller's own output never collides with the spinner line. Used by the
+/// registry commands to show activity during a network call.
+pub async fn with_spinner<F: Future>(label: impl Into<String>, fut: F) -> F::Output {
+    let spinner = Spinner::start(label);
+    let out = fut.await;
+    drop(spinner);
+    out
+}
 
 /// Terminal spinner; cleared automatically on drop.
 ///
@@ -19,6 +46,9 @@ const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧'
 pub struct Spinner {
     done: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
+    /// Serialises the animation thread's writes against [`Spinner::suspend`],
+    /// so a line printed mid-scan never collides with a spinner frame.
+    render: Arc<Mutex<()>>,
 }
 
 impl Spinner {
@@ -37,12 +67,19 @@ impl Spinner {
 
     fn spawn(label: String, progress: Option<(Arc<AtomicUsize>, usize)>) -> Self {
         let done = Arc::new(AtomicBool::new(false));
-        // Only animate on a real terminal; otherwise hand back a dormant guard.
-        if !std::io::stderr().is_terminal() {
+        let render = Arc::new(Mutex::new(()));
+        // Animate only on an interactive, non-verbose stderr; otherwise hand
+        // back a dormant guard (no thread, no output).
+        if spinners_suppressed() {
             done.store(true, Ordering::Relaxed);
-            return Self { done, handle: None };
+            return Self {
+                done,
+                handle: None,
+                render,
+            };
         }
         let done_thread = done.clone();
+        let render_thread = render.clone();
         let c = style::colors_enabled_stderr();
 
         let handle = thread::spawn(move || {
@@ -51,19 +88,18 @@ impl Spinner {
                 let ch = FRAMES[frame % FRAMES.len()].to_string();
                 let spin = style::rgb_bold(c, style::ACCENT, &ch);
                 let line = match &progress {
-                    Some((p, total)) => format!(
-                        "\r{spin} {} {}/{total}",
-                        style::dim(c, &label),
-                        p.load(Ordering::Relaxed).min(*total),
-                    ),
+                    Some((p, total)) => {
+                        let done = p.load(Ordering::Relaxed).min(*total);
+                        let pct = (done * 100).checked_div(*total).unwrap_or(100);
+                        format!("\r{spin} {} {done}/{total} ({pct}%)", style::dim(c, &label))
+                    }
                     None => format!("\r{spin} {}", style::dim(c, &label)),
                 };
-                // Lock stderr per frame, not for the spinner's whole lifetime.
-                // Holding the lock across the sleep would deadlock the main
-                // thread the moment it tries to emit an error (ui::error /
-                // tracing) while the spinner is still running — which is
-                // exactly what every failed scan/validate/compile does.
+                // Hold the render lock + stderr only per frame, not across the
+                // sleep: holding either across the sleep would block any
+                // `suspend`/error print (and could deadlock) for up to a frame.
                 {
+                    let _render = render_thread.lock().unwrap();
                     let mut stderr = std::io::stderr().lock();
                     // `\x1b[K` clears to end of line so a shrinking counter
                     // (e.g. 9/9 → 10/48) never leaves stale digits behind.
@@ -78,7 +114,24 @@ impl Spinner {
         Self {
             done,
             handle: Some(handle),
+            render,
         }
+    }
+
+    /// Run `f` with the spinner paused and its line cleared, so output printed
+    /// inside `f` lands on a clean line; the animation resumes afterwards. On a
+    /// dormant spinner it just runs `f`.
+    pub fn suspend<R>(&self, f: impl FnOnce() -> R) -> R {
+        if self.handle.is_none() {
+            return f();
+        }
+        let _render = self.render.lock().unwrap();
+        {
+            let mut stderr = std::io::stderr().lock();
+            let _ = write!(stderr, "\r\x1b[2K");
+            let _ = stderr.flush();
+        }
+        f()
     }
 }
 

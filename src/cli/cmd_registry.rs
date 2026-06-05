@@ -56,7 +56,7 @@ pub async fn cmd_login(args: LoginArgs) -> ExitCode {
     // Probe /v1/me to verify the token before saving — better to fail
     // loudly here than silently store a bad token and fail on the next
     // command.
-    let me = match client.me().await {
+    let me = match ui::with_spinner("verifying token", client.me()).await {
         Ok(m) => m,
         Err(err) => {
             ui::error(&format!("token rejected by {base_url}: {err}"));
@@ -135,7 +135,7 @@ pub async fn cmd_whoami(args: RegistryOnlyArgs) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match client.me().await {
+    match ui::with_spinner("loading account", client.me()).await {
         Ok(me) => {
             println!("user:     {}", me.username);
             println!("email:    {}", me.email);
@@ -223,7 +223,12 @@ pub async fn cmd_publish(args: PublishArgs) -> ExitCode {
 
     let visibility = args.visibility.map(visibility_str);
 
-    match client.publish(&namespace, &name, source, visibility).await {
+    match ui::with_spinner(
+        "publishing",
+        client.publish(&namespace, &name, source, visibility),
+    )
+    .await
+    {
         Ok(resp) => {
             println!(
                 "published {}/{}@{} ({} bytes, {})",
@@ -343,7 +348,12 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
             CacheMode::UseCache
         };
         if args.all_versions {
-            match install_all_versions(&store, &client, &r#ref, cache).await {
+            match ui::with_spinner(
+                "installing",
+                install_all_versions(&store, &client, &r#ref, cache),
+            )
+            .await
+            {
                 Ok(installed) => {
                     if installed.is_empty() {
                         ui::error(&format!(
@@ -369,7 +379,12 @@ pub async fn cmd_install(args: InstallArgs) -> ExitCode {
                 }
             }
         } else {
-            match install_store::install_with(&store, &client, &r#ref, cache).await {
+            match ui::with_spinner(
+                "installing",
+                install_store::install_with(&store, &client, &r#ref, cache),
+            )
+            .await
+            {
                 Ok((version, path)) => {
                     println!(
                         "installed {}/{} @ {} -> {}",
@@ -468,7 +483,7 @@ pub async fn cmd_search(args: SearchArgs) -> ExitCode {
         per_page: Some(args.per_page),
     };
 
-    match client.search(&params).await {
+    match ui::with_spinner("searching", client.search(&params)).await {
         Ok(resp) => {
             if args.json {
                 match serde_json::to_string_pretty(&resp.results) {
@@ -540,7 +555,7 @@ pub async fn cmd_info(args: InfoArgs) -> ExitCode {
         }
     };
 
-    match client.show(&ns, &name, range.as_deref()).await {
+    match ui::with_spinner("loading", client.show(&ns, &name, range.as_deref())).await {
         Ok(script) => {
             if args.json {
                 match serde_json::to_string_pretty(&script) {
@@ -611,9 +626,11 @@ pub async fn cmd_yank(args: YankArgs) -> ExitCode {
     let Some(client) = require_authed_client(&args.registry).await else {
         return ExitCode::from(1);
     };
-    match client
-        .yank_version(&ns, &name, &version, args.reason.as_deref())
-        .await
+    match ui::with_spinner(
+        "yanking",
+        client.yank_version(&ns, &name, &version, args.reason.as_deref()),
+    )
+    .await
     {
         Ok(()) => {
             println!("yanked {}/{}@{}", ns, name, version);
@@ -637,7 +654,7 @@ pub async fn cmd_unyank(args: UnyankArgs) -> ExitCode {
     let Some(client) = require_authed_client(&args.registry).await else {
         return ExitCode::from(1);
     };
-    match client.unyank_version(&ns, &name, &version).await {
+    match ui::with_spinner("unyanking", client.unyank_version(&ns, &name, &version)).await {
         Ok(()) => {
             println!("unyanked {}/{}@{}", ns, name, version);
             ExitCode::SUCCESS
@@ -669,7 +686,7 @@ pub async fn cmd_edit(args: EditArgs) -> ExitCode {
         description: args.description.map(|s| s.trim().to_string()),
         visibility: args.visibility.map(|v| visibility_str(v).to_string()),
     };
-    match client.patch_script(&ns, &name, &body).await {
+    match ui::with_spinner("updating", client.patch_script(&ns, &name, &body)).await {
         Ok(s) => {
             println!("updated {}/{}", s.namespace, s.name);
             if let Some(d) = &body.description {
@@ -718,7 +735,7 @@ pub async fn cmd_pat_list(args: PatListArgs) -> ExitCode {
     let Some(client) = require_authed_client(&args.registry).await else {
         return ExitCode::from(1);
     };
-    match client.list_tokens().await {
+    match ui::with_spinner("loading tokens", client.list_tokens()).await {
         Ok(mut tokens) => {
             if args.active_only {
                 tokens.retain(|t| t.revoked_at.is_none());
@@ -804,7 +821,7 @@ pub async fn cmd_pat_create(args: PatCreateArgs) -> ExitCode {
         scopes: scopes.clone(),
         expires_at: args.expires_at,
     };
-    match client.create_token(&req).await {
+    match ui::with_spinner("creating token", client.create_token(&req)).await {
         Ok(resp) => {
             println!(
                 "created PAT `{}` (id {}, scopes: {})",
@@ -840,7 +857,7 @@ pub async fn cmd_pat_revoke(args: PatRevokeArgs) -> ExitCode {
     let Some(client) = require_authed_client(&args.registry).await else {
         return ExitCode::from(1);
     };
-    match client.revoke_token(&args.id).await {
+    match ui::with_spinner("revoking token", client.revoke_token(&args.id)).await {
         Ok(()) => {
             println!("revoked {}", args.id);
             ExitCode::SUCCESS
@@ -1016,12 +1033,20 @@ pub async fn resolve_family_to_bytecodes(
         per_page: Some(100),
         ..Default::default()
     };
-    let resp = client.search(&params).await.map_err(|e| e.to_string())?;
+    let resp = ui::with_spinner("fetching family", client.search(&params))
+        .await
+        .map_err(|e| e.to_string())?;
     if resp.results.is_empty() {
         return Err(format!("no scripts found in family `{family}`"));
     }
 
+    // Download each family member, with a progress spinner over the set. Skip
+    // messages are deferred and printed after the spinner stops so a live
+    // spinner line never garbles them.
+    let (spinner, counter) =
+        ui::Spinner::with_progress("fetching family scripts", resp.results.len());
     let mut paths = Vec::with_capacity(resp.results.len());
+    let mut skipped = Vec::new();
     for hit in &resp.results {
         let r#ref = RegistryRef {
             namespace: hit.namespace.clone(),
@@ -1030,12 +1055,15 @@ pub async fn resolve_family_to_bytecodes(
         };
         match install_store::resolve_to_path(&store, &client, &r#ref).await {
             Ok(p) => paths.push(p),
-            Err(e) => {
-                // One bad script shouldn't sink the whole family scan —
-                // warn and carry on with the rest.
-                ui::error(&format!("skip {}/{}: {e}", hit.namespace, hit.name));
-            }
+            // One bad script shouldn't sink the whole family scan — note it and
+            // carry on with the rest.
+            Err(e) => skipped.push(format!("skip {}/{}: {e}", hit.namespace, hit.name)),
         }
+        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    drop(spinner);
+    for message in skipped {
+        ui::error(&message);
     }
     if paths.is_empty() {
         return Err(format!(

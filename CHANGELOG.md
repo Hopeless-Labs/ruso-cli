@@ -12,8 +12,21 @@ aims to follow [Semantic Versioning](https://semver.org/).
   version, GitHub, and registry links beneath it. It goes to stderr and only
   when stderr is a terminal, so piped/CI output and the report on stdout stay
   clean.
+- **Progress spinners on every command.** `scan`/`exec` show
+  `⠋ scanning <done>/<total> (<pct>%)`; the registry commands
+  (`install`, `search`, `publish`, `login`, `whoami`, `info`, `yank`,
+  `unyank`, `edit`, `pat`, and `scan --family`'s fetch) show a labelled
+  spinner over their network call. All spinners are in the ruso-orange accent
+  and self-gate: dormant when stderr is not a terminal or when `--verbose`
+  (the debug-log stream is the progress there).
 
 ### Changed
+- **Scanning is now streaming and pipelined.** Bare-host scheme resolution is
+  folded into the scan and done lazily once per target, so scanning starts
+  immediately instead of waiting for a separate "resolve every target" phase —
+  a large `--target` file no longer stalls up front. Findings now stream to the
+  console **as they are found** (the spinner is briefly suspended so each line
+  lands cleanly), rather than all at once at the end.
 - **The multi-run scan summary is now a per-target table.** Each target gets a
   row of `detected / failed / skipped / clean` counts, followed by a footer with
   the scan duration and run/target totals (`scan duration 1.4s · 3 runs across 3
@@ -37,11 +50,6 @@ aims to follow [Semantic Versioning](https://semver.org/).
   `NO_COLOR` is set, so piped/redirected output stays plain.
 
 ### Fixed
-- **`scan` / `exec` now show a progress spinner.** Only `validate` / `compile`
-  started one, so a non-verbose scan looked frozen until the summary. The scan
-  loop now drives an orange `⠋ scanning <done>/<total>` spinner (suppressed in
-  verbose mode, where per-run lines stream instead). The spinner is also
-  TTY-gated now — piped/CI runs no longer get spinner escape codes on stderr.
 - `install --force` no longer destroys a working cache entry when the
   re-download fails. It used to delete every cached `.bc` for the ref *before*
   fetching, so a registry outage or network error left you with no script at

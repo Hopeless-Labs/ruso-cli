@@ -11,11 +11,10 @@
 //! redirects) comes from [`ruso_runtime::build_client`] so probes behave
 //! exactly like the executor's real requests.
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use crate::cli::args::DefaultScheme;
-use crate::cli::{targets, ui};
+use crate::cli::targets;
 
 /// Total budget for one scheme probe. Short so an unreachable port does not
 /// stall target resolution.
@@ -23,6 +22,7 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 
 /// Inputs controlling bare-host scheme resolution, bundled so the per-target
 /// resolver is not a wall of positional booleans.
+#[derive(Clone, Copy)]
 pub struct ResolveOptions<'a> {
     /// Verify TLS certificates while probing (mirrors the scan's `--insecure`).
     pub verify_ssl: bool,
@@ -38,80 +38,51 @@ pub struct ResolveOptions<'a> {
     pub proxy: Option<&'a str>,
 }
 
-/// Outcome of resolving a batch of targets.
-pub struct Resolved {
-    /// Each target rewritten into a base URL carrying an explicit scheme.
-    pub urls: Vec<String>,
-    /// Resolved URLs the probe already warned about because 443 answered but
-    /// its TLS certificate did not verify. The scan pipeline uses this to
-    /// suppress a second, redundant `--insecure` hint for the same target.
-    pub cert_warned: HashSet<String>,
-}
-
-/// Resolve each target into a base URL carrying an explicit scheme.
+/// Resolve one target into a base URL carrying an explicit scheme, plus — if
+/// 443 answered but its cert did not verify — the warning message the caller
+/// should print.
 ///
-/// Targets that already have a scheme are returned unchanged; bare hosts are
-/// resolved per [`ResolveOptions`].
-pub async fn resolve_targets(targets: Vec<String>, opts: &ResolveOptions<'_>) -> Resolved {
-    let mut urls = Vec::with_capacity(targets.len());
-    let mut cert_warned = HashSet::new();
-    for target in targets {
-        let (url, warned) = resolve_one(&target, opts).await;
-        if warned {
-            cert_warned.insert(url.clone());
-        }
-        urls.push(url);
-    }
-    Resolved { urls, cert_warned }
-}
-
-/// Returns the resolved URL and whether a TLS-certificate warning was emitted
-/// for it (443 reachable but cert unverified).
-async fn resolve_one(target: &str, opts: &ResolveOptions<'_>) -> (String, bool) {
+/// Targets that already have a scheme are returned unchanged. The scan pipeline
+/// calls this lazily (once per target, memoised) so resolution overlaps with
+/// scanning instead of running as a separate up-front phase.
+pub async fn resolve_one(target: &str, opts: &ResolveOptions<'_>) -> (String, Option<String>) {
     // Already a URL: honor the user's explicit scheme/port untouched.
     if targets::is_url(target) {
-        return (target.to_string(), false);
+        return (target.to_string(), None);
     }
     // Pure socket scan: the carrier scheme never reaches the wire, so keep the
     // legacy http:// form (and the implied port-80 `{{scan_port}}` default).
     if !opts.needs_http {
-        return (format!("http://{target}"), false);
+        return (format!("http://{target}"), None);
     }
     if !opts.probe {
-        return (
-            format!("{}://{target}", opts.default_scheme.as_str()),
-            false,
-        );
+        return (format!("{}://{target}", opts.default_scheme.as_str()), None);
     }
 
     let https = format!("https://{target}");
     // Happy path: one probe, honoring the user's TLS-verify setting.
     if probe_responds(&https, opts.verify_ssl, opts.proxy).await {
-        return (https, false);
+        return (https, None);
     }
     // The verify-honoring probe failed. Re-probe ignoring the certificate to
     // tell a cert problem (443 is up) apart from a dead port.
     if probe_responds(&https, false, opts.proxy).await {
-        let warned = opts.verify_ssl;
-        if warned {
-            ui::warn(&format!(
+        let warning = opts.verify_ssl.then(|| {
+            format!(
                 "{target}: 443 is reachable but its TLS certificate did not verify; \
                  scanning over https — pass --insecure to complete the scan"
-            ));
-        }
+            )
+        });
         // 443 speaks TLS+HTTP; stay on https rather than downgrade to cleartext.
-        return (https, warned);
+        return (https, warning);
     }
     // 443 is genuinely unreachable; try cleartext http.
     let http = format!("http://{target}");
     if probe_responds(&http, true, opts.proxy).await {
-        return (http, false);
+        return (http, None);
     }
     // Neither port answered (host down/filtered): fall back to the default.
-    (
-        format!("{}://{target}", opts.default_scheme.as_str()),
-        false,
-    )
+    (format!("{}://{target}", opts.default_scheme.as_str()), None)
 }
 
 /// True if a GET to `url` elicits any HTTP response. Any status counts — we are
@@ -143,13 +114,12 @@ mod tests {
 
     #[tokio::test]
     async fn url_targets_pass_through_unchanged() {
-        let out = resolve_targets(
-            vec!["https://a.example".into(), "http://b.example:8080".into()],
-            &http_scan_opts(),
-        )
-        .await;
-        assert_eq!(out.urls, vec!["https://a.example", "http://b.example:8080"]);
-        assert!(out.cert_warned.is_empty());
+        let (url, warning) = resolve_one("https://a.example", &http_scan_opts()).await;
+        assert_eq!(url, "https://a.example");
+        assert!(warning.is_none());
+
+        let (url, _) = resolve_one("http://b.example:8080", &http_scan_opts()).await;
+        assert_eq!(url, "http://b.example:8080");
     }
 
     #[tokio::test]
@@ -159,8 +129,8 @@ mod tests {
             needs_http: false,
             ..http_scan_opts()
         };
-        let out = resolve_targets(vec!["db.internal:6379".into()], &opts).await;
-        assert_eq!(out.urls, vec!["http://db.internal:6379"]);
+        let (url, _) = resolve_one("db.internal:6379", &opts).await;
+        assert_eq!(url, "http://db.internal:6379");
     }
 
     #[tokio::test]
@@ -185,24 +155,24 @@ mod tests {
         });
 
         let target = format!("127.0.0.1:{port}");
-        let out = resolve_targets(vec![target.clone()], &http_scan_opts()).await;
-        assert_eq!(out.urls, vec![format!("http://{target}")]);
+        let (url, _) = resolve_one(&target, &http_scan_opts()).await;
+        assert_eq!(url, format!("http://{target}"));
     }
 
     #[tokio::test]
     async fn probe_disabled_applies_default_scheme() {
-        let https = resolve_targets(
-            vec!["x.example".into()],
+        let (https, _) = resolve_one(
+            "x.example",
             &ResolveOptions {
                 probe: false,
                 ..http_scan_opts()
             },
         )
         .await;
-        assert_eq!(https.urls, vec!["https://x.example"]);
+        assert_eq!(https, "https://x.example");
 
-        let http = resolve_targets(
-            vec!["x.example".into()],
+        let (http, _) = resolve_one(
+            "x.example",
             &ResolveOptions {
                 probe: false,
                 default_scheme: DefaultScheme::Http,
@@ -210,6 +180,6 @@ mod tests {
             },
         )
         .await;
-        assert_eq!(http.urls, vec!["http://x.example"]);
+        assert_eq!(http, "http://x.example");
     }
 }

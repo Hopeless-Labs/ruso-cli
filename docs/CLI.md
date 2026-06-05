@@ -427,10 +427,17 @@ Idempotent — already-revoked tokens still return success.
 (e.g. `[CRITICAL] 127.0.0.1 Redis exposed without authentication`). The
 `[SEVERITY]` tag is colour-coded by level (critical = magenta, high = red,
 medium = yellow, low = cyan, info = grey), the target is bold, and tags are
-padded to one column so targets line up. The full metadata is intentionally
-kept out of the console — use `--output json` / `csv` with `--report <path>`
-for the complete record. In `-v` mode each run also logs a status line:
-`[OK]` (green), `[SKIP] … (reason)` (yellow), or `[ERROR] … (msg)` (red).
+padded to one column so targets line up. Findings **stream as they are found**
+during the scan (a progress spinner sits below them on a TTY), not in a single
+dump at the end. The full metadata is intentionally kept out of the console —
+use `--output json` / `csv` with `--report <path>` for the complete record. In
+`-v` mode each run instead logs a status line as it completes: `[OK]` (green),
+`[SKIP] … (reason)` (yellow), or `[ERROR] … (msg)` (red).
+
+Scanning is **pipelined**: a bare-host `--target`'s scheme (http/https) is
+resolved lazily, once per target, as part of scanning — so a large target file
+starts producing results immediately instead of waiting for every target to be
+probed up front.
 
 For a multi-run scan the human output ends with a **per-target summary table**
 and a duration footer:
