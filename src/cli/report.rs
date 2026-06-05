@@ -436,43 +436,89 @@ fn print_human(report: &ScanRunReport, verbose: bool) -> Result<(), String> {
     }
 
     if multi && (report.summary.detected > 0 || report.summary.failed > 0 || verbose) {
-        let c = style::colors_enabled();
-        println!();
-        println!(
-            "{}",
-            style::heading(
-                c,
-                &format!(
-                    "scan summary: {} run(s) ({} target(s) × {} script(s))",
-                    report.summary.total_runs,
-                    report.targets.len(),
-                    report.scripts.len(),
-                )
-            )
-        );
-        println!(
-            "  detected: {}",
-            emphasise_count(c, report.summary.detected)
-        );
-        println!("  failed:   {}", emphasise_count(c, report.summary.failed));
-        if report.summary.skipped > 0 {
-            println!("  skipped:  {}", report.summary.skipped);
-        }
-        if verbose {
-            println!("  clean:    {}", report.summary.clean);
-        }
+        print_summary_table(&report.summary, report.targets.len(), report.scripts.len());
     }
 
     Ok(())
 }
 
-/// A count that matters (detected/failed) is red when non-zero, plain at zero.
-fn emphasise_count(enabled: bool, n: usize) -> String {
-    if n > 0 {
-        style::alert(enabled, &n.to_string())
-    } else {
-        n.to_string()
+/// English plural suffix for a count (`1 target`, `48 targets`).
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+/// Render the multi-run outcome as a small bordered table, e.g.
+///
+/// ```text
+/// scan summary · 1 target × 48 scripts × 48 runs
+/// ┌──────────┬────┐
+/// │ detected │  0 │
+/// │ failed   │ 48 │
+/// │ skipped  │  0 │
+/// │ clean    │  0 │
+/// └──────────┴────┘
+/// ```
+///
+/// Each count is coloured by bucket when non-zero (detected/failed red,
+/// skipped yellow, clean green) and dimmed at zero, so the eye lands on what
+/// actually happened.
+fn print_summary_table(summary: &ScanSummary, targets: usize, scripts: usize) {
+    let c = style::colors_enabled();
+
+    // A `style` colouriser: `(enabled, text) -> painted`.
+    type Colouriser = fn(bool, &str) -> String;
+    // (label, count, colouriser applied when the count is non-zero)
+    let rows: [(&str, usize, Colouriser); 4] = [
+        ("detected", summary.detected, style::alert),
+        ("failed", summary.failed, style::alert),
+        ("skipped", summary.skipped, style::caution),
+        ("clean", summary.clean, style::good),
+    ];
+
+    let label_w = rows.iter().map(|(l, ..)| l.len()).max().unwrap_or(0);
+    let count_w = rows
+        .iter()
+        .map(|(_, n, _)| n.to_string().len())
+        .max()
+        .unwrap_or(1)
+        .max(1);
+
+    let rule = |left: char, mid: char, right: char| {
+        format!(
+            "{left}{}{mid}{}{right}",
+            "─".repeat(label_w + 2),
+            "─".repeat(count_w + 2),
+        )
+    };
+
+    println!();
+    println!(
+        "{}",
+        style::heading(
+            c,
+            &format!(
+                "scan summary · {targets} target{} × {scripts} script{} × {} run{}",
+                plural(targets),
+                plural(scripts),
+                summary.total_runs,
+                plural(summary.total_runs),
+            )
+        )
+    );
+    println!("{}", rule('┌', '┬', '┐'));
+    for (label, n, paint) in rows {
+        // Pad the plain cells to the column width first, then colour — the
+        // escape bytes are added after padding so the borders stay aligned.
+        let label_cell = format!("{label:<label_w$}");
+        let count_cell = format!("{n:>count_w$}");
+        let (label_cell, count_cell) = if n > 0 {
+            (paint(c, &label_cell), paint(c, &count_cell))
+        } else {
+            (style::dim(c, &label_cell), style::dim(c, &count_cell))
+        };
+        println!("│ {label_cell} │ {count_cell} │");
     }
+    println!("{}", rule('└', '┴', '┘'));
 }
 
 fn script_label(script: &str) -> String {

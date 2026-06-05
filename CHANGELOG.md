@@ -7,6 +7,11 @@ aims to follow [Semantic Versioning](https://semver.org/).
 ## [0.1.0-beta.4] - 2026-06-05
 
 ### Changed
+- **The multi-run scan summary is now a bordered table.** The old loose
+  `detected:`/`failed:` lines became a `detected / failed / skipped / clean`
+  table with the run breakdown (`N target × M scripts × K runs`) as a heading.
+  Counts are coloured by bucket when non-zero (detected/failed red, skipped
+  yellow, clean green) and dimmed at zero.
 - **Warnings and errors print a styled `[WARNING]` / `[ERROR]` tag** (yellow /
   red on a TTY) instead of the lowercase `warning:` / `error:` prefix, matching
   the scan output. Colour follows stderr's own TTY/`NO_COLOR` state.

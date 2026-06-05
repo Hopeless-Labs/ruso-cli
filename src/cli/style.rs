@@ -104,6 +104,16 @@ pub fn alert(enabled: bool, text: &str) -> String {
     paint(enabled, "31", text)
 }
 
+/// Yellow highlight (e.g. a non-zero skipped count).
+pub fn caution(enabled: bool, text: &str) -> String {
+    paint(enabled, "33", text)
+}
+
+/// Green highlight (e.g. a non-zero clean count).
+pub fn good(enabled: bool, text: &str) -> String {
+    paint(enabled, "32", text)
+}
+
 /// `[WARNING]` tag for stderr advisories (bold yellow).
 pub fn warn_tag(enabled: bool) -> String {
     paint(enabled, "1;33", "[WARNING]")
