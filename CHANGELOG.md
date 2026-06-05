@@ -7,6 +7,15 @@ aims to follow [Semantic Versioning](https://semver.org/).
 ## [0.1.0-beta.4] - 2026-06-05
 
 ### Changed
+- **Warnings and errors print a styled `[WARNING]` / `[ERROR]` tag** (yellow /
+  red on a TTY) instead of the lowercase `warning:` / `error:` prefix, matching
+  the scan output. Colour follows stderr's own TTY/`NO_COLOR` state.
+- **No more duplicate TLS-certificate warning.** A bare-host scan whose 443
+  answered but failed cert verification printed two near-identical `--insecure`
+  hints — one from the scheme probe, one after the scan. The post-scan hint now
+  skips targets the scheme probe already warned about, so each target is flagged
+  once. Explicitly-schemed `https://` targets (which bypass the probe) still get
+  the post-scan hint.
 - **Human scan output is now colour-coded.** The `[SEVERITY]` finding tag is
   coloured by level (critical = magenta, high = red, medium = yellow, low =
   cyan, info = grey), the target is bold, secondary text (script label, skip/

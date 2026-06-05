@@ -218,6 +218,9 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         .map(|(label, bytecode)| PreparedScript::Ready { label, bytecode })
         .collect();
 
+    // exec runs no scheme probe, so no target was pre-warned about its cert.
+    let cert_warned_targets: std::collections::HashSet<String> = std::collections::HashSet::new();
+
     run_scan_pipeline(
         &targets,
         &prepared_scripts,
@@ -229,6 +232,7 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         verbose,
         multi_target,
         &mut scan_report,
+        &cert_warned_targets,
     )
     .await;
 
@@ -362,7 +366,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
             .any(|kind| matches!(kind, ruso_runtime::ProbeKind::Http(_))),
         PreparedScript::Failed { .. } => false,
     });
-    let scan_targets = scheme::resolve_targets(
+    let resolved = scheme::resolve_targets(
         scan_targets,
         &scheme::ResolveOptions {
             verify_ssl: base_config.verify_ssl,
@@ -373,6 +377,10 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         },
     )
     .await;
+    // Targets the scheme probe already cert-warned about, so the post-scan
+    // hint below doesn't repeat the same `--insecure` advice for them.
+    let cert_warned_targets = resolved.cert_warned;
+    let scan_targets = resolved.urls;
 
     let script_labels: Vec<String> = prepared_scripts
         .iter()
@@ -407,6 +415,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         verbose,
         multi_target,
         &mut scan_report,
+        &cert_warned_targets,
     )
     .await;
 
@@ -461,6 +470,10 @@ async fn run_scan_pipeline(
     verbose: bool,
     multi_target: bool,
     scan_report: &mut ScanRunReport,
+    // Targets the scheme probe already cert-warned about; their cert failures
+    // don't re-trigger the post-scan `--insecure` hint. `cmd_exec` passes an
+    // empty set (no scheme probe runs there).
+    cert_warned_targets: &std::collections::HashSet<String>,
 ) {
     use futures::stream::{self, StreamExt};
 
@@ -475,11 +488,13 @@ async fn run_scan_pipeline(
 
     let mut completed: Vec<Option<ScanResultRecord>> = (0..jobs.len()).map(|_| None).collect();
 
-    // Set when any run fails on TLS certificate verification, so we can surface
-    // the `--insecure` hint once after the scan. This covers explicitly-schemed
-    // `https://` targets too, which bypass the bare-host scheme probe (and thus
-    // its cert warning).
-    let cert_error = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Resolved targets whose runs failed on TLS certificate verification, so we
+    // can surface the `--insecure` hint once after the scan. Keyed by target so
+    // we can skip the ones the scheme probe already warned about, while still
+    // covering explicitly-schemed `https://` targets that bypass that probe.
+    let cert_failed_targets = std::sync::Arc::new(std::sync::Mutex::new(
+        std::collections::HashSet::<String>::new(),
+    ));
 
     let mut stream = stream::iter(jobs.into_iter().enumerate())
         .map(|(idx, (ti, si))| {
@@ -488,7 +503,7 @@ async fn run_scan_pipeline(
             let config = executor_config_for_target(base_config, &target);
             let host_throttle = host_throttle.clone();
             let rate_limiter = rate_limiter.clone();
-            let cert_error = cert_error.clone();
+            let cert_failed_targets = cert_failed_targets.clone();
             async move {
                 // Order matters: take the per-host slot first, then the RPS
                 // token. That way the rate limiter only consumes a slot for
@@ -517,7 +532,7 @@ async fn run_scan_pipeline(
                     .err()
                     .is_some_and(|msg| msg.to_ascii_lowercase().contains("certificate"))
                 {
-                    cert_error.store(true, std::sync::atomic::Ordering::Relaxed);
+                    cert_failed_targets.lock().unwrap().insert(target.clone());
                 }
                 let record = match &exec_result {
                     Ok(r) => ScanResultRecord::from_execution(target.clone(), label.clone(), r),
@@ -547,13 +562,19 @@ async fn run_scan_pipeline(
         scan_report.push_record(record);
     }
 
-    // One-shot hint: if verification is on and at least one run failed on a bad
-    // certificate, point the user at --insecure (covers explicit https:// and
-    // bare hosts alike).
-    if base_config.verify_ssl && cert_error.load(std::sync::atomic::Ordering::Relaxed) {
-        ui::warn(
-            "a target's TLS certificate did not verify — pass --insecure to scan it \
-             (only if you accept the MITM / finding-injection risk)",
-        );
+    // One-shot hint: if verification is on and a run failed on a bad
+    // certificate for a target the scheme probe did *not* already warn about
+    // (e.g. an explicitly-schemed `https://` target), point the user at
+    // --insecure. Targets the probe warned about are skipped so the same advice
+    // isn't printed twice.
+    if base_config.verify_ssl {
+        let failed = cert_failed_targets.lock().unwrap();
+        let unwarned = failed.difference(cert_warned_targets).next().is_some();
+        if unwarned {
+            ui::warn(
+                "a target's TLS certificate did not verify — pass --insecure to scan it \
+                 (only if you accept the MITM / finding-injection risk)",
+            );
+        }
     }
 }

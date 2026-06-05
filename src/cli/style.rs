@@ -15,16 +15,28 @@ const RESET: &str = "\x1b[0m";
 /// lines up across findings (`[CRITICAL]`) and status rows (`[OK]`).
 const TAG_WIDTH: usize = 10;
 
-/// Whether colour should be emitted, decided once from the environment.
+/// Colour iff the given stream is a terminal and `NO_COLOR` is unset.
+fn detect(stream_is_terminal: bool) -> bool {
+    // Any presence of NO_COLOR disables colour, regardless of its value.
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    stream_is_terminal
+}
+
+/// Whether colour should be emitted on **stdout** (scan findings/status),
+/// decided once from the environment.
 pub fn colors_enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        // Any presence of NO_COLOR disables colour, regardless of its value.
-        if std::env::var_os("NO_COLOR").is_some() {
-            return false;
-        }
-        std::io::stdout().is_terminal()
-    })
+    *ENABLED.get_or_init(|| detect(std::io::stdout().is_terminal()))
+}
+
+/// Whether colour should be emitted on **stderr** (warnings, errors), decided
+/// once from the environment. Separate from [`colors_enabled`] because stdout
+/// and stderr can be redirected independently.
+pub fn colors_enabled_stderr() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| detect(std::io::stderr().is_terminal()))
 }
 
 /// Wrap `text` in an SGR sequence when `enabled`, otherwise return it as-is.
@@ -90,6 +102,16 @@ pub fn heading(enabled: bool, text: &str) -> String {
 /// Red highlight for a non-zero detected/failed count in the summary.
 pub fn alert(enabled: bool, text: &str) -> String {
     paint(enabled, "31", text)
+}
+
+/// `[WARNING]` tag for stderr advisories (bold yellow).
+pub fn warn_tag(enabled: bool) -> String {
+    paint(enabled, "1;33", "[WARNING]")
+}
+
+/// `[ERROR]` tag for stderr failures (bold red).
+pub fn error_tag(enabled: bool) -> String {
+    paint(enabled, "1;31", "[ERROR]")
 }
 
 #[cfg(test)]

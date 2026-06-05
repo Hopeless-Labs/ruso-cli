@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use crate::cli::style;
+
 const FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 /// Terminal spinner; cleared automatically on drop.
@@ -58,11 +60,13 @@ impl Drop for Spinner {
 }
 
 pub fn error(message: &str) {
-    eprintln!("error: {message}");
+    let c = style::colors_enabled_stderr();
+    eprintln!("{} {message}", style::error_tag(c));
 }
 
 /// User-facing warning, always printed to stderr regardless of log verbosity
 /// (unlike `tracing::warn!`, which the default `ruso=off` filter suppresses).
 pub fn warn(message: &str) {
-    eprintln!("warning: {message}");
+    let c = style::colors_enabled_stderr();
+    eprintln!("{} {message}", style::warn_tag(c));
 }
