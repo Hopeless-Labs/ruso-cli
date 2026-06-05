@@ -10,6 +10,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ruso_runtime::decode_bytecode;
 use semver::{Version, VersionReq};
 use thiserror::Error;
 
@@ -293,7 +294,11 @@ pub async fn install(
         best_local_match(store, &r#ref.namespace, &r#ref.name, r#ref.range.as_deref())?
     {
         let path = store.bytecode_path(&r#ref.namespace, &r#ref.name, &local.to_string());
-        if path.exists() {
+        // Only reuse a cached entry that still decodes with the current
+        // runtime. A stale file — compiled by a different toolchain than the
+        // one running now — is re-fetched (and overwritten below) instead of
+        // being handed back to fail as "corrupt bytecode" at scan time.
+        if path.exists() && cached_bytecode_is_usable(&path) {
             return Ok((local, path));
         }
     }
@@ -337,6 +342,16 @@ pub async fn resolve_to_path(
     install(store, client, r#ref).await.map(|(_, p)| p)
 }
 
+/// Whether the cached bytecode at `path` still decodes with the current
+/// runtime.
+///
+/// A cache entry compiled by a different toolchain than the one running now
+/// fails to decode; returning `false` lets [`install`] re-fetch instead of
+/// handing back bytecode the executor would later reject as corrupt.
+fn cached_bytecode_is_usable(path: &Path) -> bool {
+    super::read_bytecode_file(path).is_ok_and(|bytes| decode_bytecode(&bytes).is_ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -347,6 +362,27 @@ mod tests {
         assert_eq!(r.namespace, "alice");
         assert_eq!(r.name, "log4shell");
         assert!(r.range.is_none());
+    }
+
+    #[test]
+    fn stale_or_missing_cache_is_not_usable() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("ruso-cache-test-{nonce}.bc"));
+
+        // A missing entry has nothing to reuse.
+        assert!(!cached_bytecode_is_usable(&path));
+
+        // Well-formed hex that is not a valid program — what a stale entry from
+        // an incompatible compiler looks like — must be rejected so `install`
+        // re-fetches instead of returning bytecode the executor will reject.
+        std::fs::write(&path, b"deadbeefdeadbeef").unwrap();
+        assert!(!cached_bytecode_is_usable(&path));
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

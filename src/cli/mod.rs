@@ -431,7 +431,7 @@ enum PreparedScript {
 }
 
 /// `.bc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.
-fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
+pub(crate) fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
     let data = std::fs::read(path).map_err(|err| format!("failed to read: {err}"))?;
     if data.starts_with(MAGIC) {
         return Ok(data);
