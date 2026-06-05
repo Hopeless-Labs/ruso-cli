@@ -37,6 +37,11 @@ aims to follow [Semantic Versioning](https://semver.org/).
   `NO_COLOR` is set, so piped/redirected output stays plain.
 
 ### Fixed
+- **`scan` / `exec` now show a progress spinner.** Only `validate` / `compile`
+  started one, so a non-verbose scan looked frozen until the summary. The scan
+  loop now drives an orange `⠋ scanning <done>/<total>` spinner (suppressed in
+  verbose mode, where per-run lines stream instead). The spinner is also
+  TTY-gated now — piped/CI runs no longer get spinner escape codes on stderr.
 - `install --force` no longer destroys a working cache entry when the
   re-download fails. It used to delete every cached `.bc` for the ref *before*
   fetching, so a registry outage or network error left you with no script at

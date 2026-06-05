@@ -85,7 +85,7 @@ fn cmd_validate(args: args::ValidateArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    let _spinner = (!verbose).then(ui::Spinner::start);
+    let _spinner = (!verbose).then(|| ui::Spinner::start("validating"));
 
     for path in &scripts {
         let source = match load_script(path) {
@@ -111,7 +111,7 @@ fn cmd_compile(args: args::CompileArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    let _spinner = (!verbose).then(ui::Spinner::start);
+    let _spinner = (!verbose).then(|| ui::Spinner::start("compiling"));
 
     for path in &scripts {
         let program = match load_program(path) {
@@ -570,12 +570,22 @@ async fn run_scan_pipeline(
         })
         .buffer_unordered(concurrency);
 
+    // In verbose mode each run streams its own `[OK]/[SKIP]/[ERROR]` line, so a
+    // spinner would fight them. Otherwise the loop is silent until the summary,
+    // so show a progress spinner (`⠋ scanning 12/48`) over the work. Dropped
+    // before the post-scan warnings / summary so it never overwrites them.
+    let progress = (!verbose).then(|| ui::Spinner::with_progress("scanning", completed.len()));
+
     while let Some((idx, record)) = stream.next().await {
         if output == OutputFormat::Human && verbose {
             print_live_run(&record, multi_target);
         }
         completed[idx] = Some(record);
+        if let Some((_, counter)) = &progress {
+            counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
+    drop(progress);
 
     // Push records back in their original (target, script) slot order. Each
     // record already carries the right `success`/`detected`/`error` shape;
