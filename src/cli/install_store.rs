@@ -1,6 +1,6 @@
 //! Local install cache + registry-ref resolution.
 //!
-//! Layout: `<home>/.ruso/scripts/<namespace>/<name>/<version>.bc`
+//! Layout: `<home>/.ruso/scripts/<namespace>/<name>/<version>.rbc`
 //!
 //! `RegistryRef` is the parsed `<namespace>/<name>[@<range>]` form a user
 //! types in `--script`. `resolve` walks installed versions, picks the best
@@ -157,7 +157,7 @@ impl InstallStore {
 
     pub fn bytecode_path(&self, namespace: &str, name: &str, version: &str) -> PathBuf {
         self.script_dir(namespace, name)
-            .join(format!("{version}.bc"))
+            .join(format!("{version}.rbc"))
     }
 
     /// All installed versions of `<ns>/<name>` in semver order (newest first).
@@ -185,7 +185,7 @@ impl InstallStore {
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            if path.extension().and_then(|e| e.to_str()) != Some("bc") {
+            if path.extension().and_then(|e| e.to_str()) != Some("rbc") {
                 continue;
             }
             if let Ok(v) = Version::parse(stem) {
@@ -201,7 +201,7 @@ impl InstallStore {
     /// The write is **atomic**: bytes land in a sibling temp file that is
     /// then renamed over the final path (rename within one directory is
     /// atomic on POSIX). A crash or short write therefore never leaves a
-    /// half-written `.bc`, and overwriting an existing entry either fully
+    /// half-written `.rbc`, and overwriting an existing entry either fully
     /// succeeds or leaves the old entry untouched — so a failed re-download
     /// can't destroy a working cache entry.
     pub fn write_bytecode(
@@ -216,10 +216,10 @@ impl InstallStore {
             path: dir.clone(),
             source,
         })?;
-        let path = dir.join(format!("{version}.bc"));
+        let path = dir.join(format!("{version}.rbc"));
         // Unique per process so two concurrent installs of the same version
         // can't clobber each other's temp file.
-        let tmp = dir.join(format!(".{version}.bc.{}.tmp", std::process::id()));
+        let tmp = dir.join(format!(".{version}.rbc.{}.tmp", std::process::id()));
         fs::write(&tmp, bytes).map_err(|source| InstallError::Write {
             path: tmp.clone(),
             source,
@@ -236,12 +236,12 @@ impl InstallStore {
 }
 
 /// If `path` looks like a file under the install cache
-/// (`…/scripts/<ns>/<name>/<version>.bc`), reconstruct a friendly
+/// (`…/scripts/<ns>/<name>/<version>.rbc`), reconstruct a friendly
 /// `ns/name@version` label. Returns `None` for paths that don't match
 /// the layout so callers fall back to the raw path.
 pub fn pretty_label(path: &Path) -> Option<String> {
     let version = path.file_stem()?.to_str()?;
-    if path.extension().and_then(|e| e.to_str()) != Some("bc") {
+    if path.extension().and_then(|e| e.to_str()) != Some("rbc") {
         return None;
     }
     if Version::parse(version).is_err() {
@@ -412,7 +412,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!("ruso-cache-test-{nonce}.bc"));
+        let path = std::env::temp_dir().join(format!("ruso-cache-test-{nonce}.rbc"));
 
         // A missing entry has nothing to reuse.
         assert!(!cached_bytecode_is_usable(&path));

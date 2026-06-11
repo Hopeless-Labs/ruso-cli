@@ -200,7 +200,7 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         results: Vec::with_capacity(targets.len() * bytecode_files.len()),
     };
 
-    // Decode each .bc file once and share the resulting bytecode across
+    // Decode each .rbc file once and share the resulting bytecode across
     // targets via Arc — same optimisation as `cmd_scan`.
     let mut prepared_bytecode: Vec<(String, Arc<BytecodeProgram>)> =
         Vec::with_capacity(bytecode_files.len());
@@ -341,7 +341,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
                 }
             })
             .collect(),
-        // Registry refs and `.bc` paths bypass the compile step — they are
+        // Registry refs and `.rbc` paths bypass the compile step — they are
         // already-validated bytecode the publish path produced (or someone
         // ran `ruso compile` over locally). Same decode logic as cmd_exec.
         ScriptInput::Bytecodes(bytecode_files) => {
@@ -460,14 +460,14 @@ enum PreparedScript {
     },
 }
 
-/// `.bc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.
+/// `.rbc` files are lowercase hex (from `compile`). Legacy raw `RUSO` bytes still accepted.
 pub(crate) fn read_bytecode_file(path: &Path) -> Result<Vec<u8>, String> {
     let data = std::fs::read(path).map_err(|err| format!("failed to read: {err}"))?;
     if data.starts_with(MAGIC) {
         return Ok(data);
     }
     let text = std::str::from_utf8(&data)
-        .map_err(|err| format!("invalid .bc file (expected hex text): {err}"))?;
+        .map_err(|err| format!("invalid .rbc file (expected hex text): {err}"))?;
     hex_to_bytes(text).map_err(|err| err.to_string())
 }
 

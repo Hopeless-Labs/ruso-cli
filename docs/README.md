@@ -6,5 +6,5 @@
 
 | Topic | Repository |
 |-------|------------|
-| DSL syntax | [ruso-script](https://github.com/Hopeless-Labs/ruso-script) |
+| RSL syntax | [ruso-script](https://github.com/Hopeless-Labs/ruso-script) |
 | Bytecode format | [ruso-runtime](https://github.com/Hopeless-Labs/ruso-runtime) |

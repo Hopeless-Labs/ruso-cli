@@ -1,4 +1,4 @@
-//! Discover `.ruso` scripts and `.bc` bytecode files from a path.
+//! Discover `.rsl` scripts and `.rbc` bytecode files from a path.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -9,13 +9,13 @@ use thiserror::Error;
 pub enum DiscoverError {
     #[error("path not found: {0}")]
     NotFound(PathBuf),
-    #[error("not a .ruso script file: {0}")]
+    #[error("not a .rsl script file: {0}")]
     NotScript(PathBuf),
-    #[error("not a .bc bytecode file: {0}")]
+    #[error("not a .rbc bytecode file: {0}")]
     NotBytecode(PathBuf),
-    #[error("no .ruso scripts found under {0}")]
+    #[error("no .rsl scripts found under {0}")]
     EmptyScripts(PathBuf),
-    #[error("no .bc bytecode files found under {0}")]
+    #[error("no .rbc bytecode files found under {0}")]
     EmptyBytecode(PathBuf),
     #[error("failed to read {path}: {source}")]
     Io {
@@ -24,17 +24,17 @@ pub enum DiscoverError {
     },
 }
 
-/// Resolve a script path to one or more `.ruso` files.
+/// Resolve a script path to one or more `.rsl` files.
 ///
-/// - File: must have extension `ruso`
-/// - Directory: all `*.ruso` files under it, recursively
+/// - File: must have extension `rsl`
+/// - Directory: all `*.rsl` files under it, recursively
 pub fn discover_scripts(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     if !path.exists() {
         return Err(DiscoverError::NotFound(path.to_path_buf()));
     }
 
     if path.is_file() {
-        if path.extension().is_some_and(|ext| ext == "ruso") {
+        if path.extension().is_some_and(|ext| ext == "rsl") {
             return Ok(vec![path.to_path_buf()]);
         }
         return Err(DiscoverError::NotScript(path.to_path_buf()));
@@ -43,7 +43,7 @@ pub fn discover_scripts(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     if path.is_dir() {
         let mut scripts = Vec::new();
         let mut visited = HashSet::new();
-        collect_by_extension(path, "ruso", &mut scripts, &mut visited)?;
+        collect_by_extension(path, "rsl", &mut scripts, &mut visited)?;
         if scripts.is_empty() {
             return Err(DiscoverError::EmptyScripts(path.to_path_buf()));
         }
@@ -54,17 +54,17 @@ pub fn discover_scripts(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     Err(DiscoverError::NotFound(path.to_path_buf()))
 }
 
-/// Resolve a bytecode path to one or more `.bc` files.
+/// Resolve a bytecode path to one or more `.rbc` files.
 ///
-/// - File: must have extension `bc`
-/// - Directory: all `*.bc` files under it, recursively
+/// - File: must have extension `rbc`
+/// - Directory: all `*.rbc` files under it, recursively
 pub fn discover_bytecode(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     if !path.exists() {
         return Err(DiscoverError::NotFound(path.to_path_buf()));
     }
 
     if path.is_file() {
-        if path.extension().is_some_and(|ext| ext == "bc") {
+        if path.extension().is_some_and(|ext| ext == "rbc") {
             return Ok(vec![path.to_path_buf()]);
         }
         return Err(DiscoverError::NotBytecode(path.to_path_buf()));
@@ -73,7 +73,7 @@ pub fn discover_bytecode(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     if path.is_dir() {
         let mut files = Vec::new();
         let mut visited = HashSet::new();
-        collect_by_extension(path, "bc", &mut files, &mut visited)?;
+        collect_by_extension(path, "rbc", &mut files, &mut visited)?;
         if files.is_empty() {
             return Err(DiscoverError::EmptyBytecode(path.to_path_buf()));
         }
@@ -84,9 +84,9 @@ pub fn discover_bytecode(path: &Path) -> Result<Vec<PathBuf>, DiscoverError> {
     Err(DiscoverError::NotFound(path.to_path_buf()))
 }
 
-/// `checks/foo.ruso` → `checks/foo.bc` (same parent, `.bc` extension).
+/// `checks/foo.rsl` → `checks/foo.rbc` (same parent, `.rbc` extension).
 pub fn bytecode_path_for_script(script: &Path) -> PathBuf {
-    script.with_extension("bc")
+    script.with_extension("rbc")
 }
 
 fn collect_by_extension(

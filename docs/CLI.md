@@ -6,10 +6,10 @@ Binary name: **`ruso`**. Fifteen commands across two groups:
 
 | Command | Purpose |
 |---------|---------|
-| `scan` | Parse, compile, and run `.ruso` against targets |
-| `validate` | Check `.ruso` syntax |
-| `compile` | Write hex-encoded bytecode to `<script>.bc` (silent on success) |
-| `exec` | Run `.bc` bytecode against targets |
+| `scan` | Parse, compile, and run `.rsl` against targets |
+| `validate` | Check `.rsl` syntax |
+| `compile` | Write hex-encoded bytecode to `<script>.rbc` (silent on success) |
+| `exec` | Run `.rbc` bytecode against targets |
 
 **Registry** (talks to [`ruso-backend`](https://github.com/Hopeless-Labs/ruso-backend)):
 
@@ -18,7 +18,7 @@ Binary name: **`ruso`**. Fifteen commands across two groups:
 | `login` | Save a PAT or session token for the active registry |
 | `logout` | Delete the stored credential |
 | `whoami` | Show the user the stored credential belongs to |
-| `publish` | Upload a `.ruso` script (under your own namespace) |
+| `publish` | Upload a `.rsl` script (under your own namespace) |
 | `install` | Download `<ns>/<name>[@<range>]` into the local cache |
 | `search` | Search published scripts |
 | `info` | Show registry metadata for a script (versions, install, tags, family) |
@@ -79,39 +79,39 @@ Resolution rule for `scan` / `exec`:
    (Local files always win, so a directory named `myorg/check` still
    works.)
 2. Else if it parses as a registry ref → resolve through the install
-   cache (`$RUSO_HOME` or `$HOME/.ruso/scripts/<ns>/<name>/<version>.bc`),
+   cache (`$RUSO_HOME` or `$HOME/.ruso/scripts/<ns>/<name>/<version>.rbc`),
    downloading from the registry on cache miss.
 3. Else → error.
 
 ## `validate`
 
 ```bash
-ruso validate --script check.ruso
+ruso validate --script check.rsl
 ruso validate --script ./checks/
 ```
 
-- File must be `.ruso`; directory collects `*.ruso` recursively.
+- File must be `.rsl`; directory collects `*.rsl` recursively.
 - Exit `0` if all valid; errors on stderr only.
 - No stdout on success.
 
 ## `compile`
 
 ```bash
-ruso compile --script check.ruso
+ruso compile --script check.rsl
 ruso compile --script ./checks/
 ```
 
-- Writes **lowercase hex** of the RUSO v1 bytecode to `check.bc` beside `check.ruso` (ASCII text, not raw binary).
+- Writes **lowercase hex** of the RUSO v1 bytecode to `check.rbc` beside `check.rsl` (ASCII text, not raw binary).
 - No stdout on success.
-- `exec` decodes hex from `.bc` before running (legacy raw-binary `.bc` with `RUSO` header still works).
+- `exec` decodes hex from `.rbc` before running (legacy raw-binary `.rbc` with `RUSO` header still works).
 - While the runtime is `0.1.0-dev` the v1 wire format may change between
-  commits without a version bump — recompile your `.bc` files after each
+  commits without a version bump — recompile your `.rbc` files after each
   upgrade.
 
 ## `exec`
 
 ```bash
-ruso exec --bytecode check.bc --target https://example.com
+ruso exec --bytecode check.rbc --target https://example.com
 ruso exec --bytecode ./built/ --target targets.txt -v
 # Registry ref — auto-fetches if not cached.
 ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
@@ -119,7 +119,7 @@ ruso exec --bytecode myorg/log4shell@^0.2 --target https://lab.local
 
 | Flag | Description |
 |------|-------------|
-| `--bytecode` | `.bc` file, directory of `.bc` files, or registry ref `<ns>/<name>[@<range>]` |
+| `--bytecode` | `.rbc` file, directory of `.rbc` files, or registry ref `<ns>/<name>[@<range>]` |
 | `--target` | URL (`http(s)://…`), bare host/IP/domain (`127.0.0.1`, `db.internal:5432`, `[::1]:9000`), or a file with one target per line |
 | `--registry <URL>` | Override the registry base URL (only consulted for ref inputs) |
 | `--timeout` | Default `30s` |
@@ -154,13 +154,13 @@ Endpoints:
 ## `scan`
 
 ```bash
-ruso scan --script check.ruso --target https://example.com
+ruso scan --script check.rsl --target https://example.com
 ruso scan --script ./checks/ --target targets.txt --output json --report out.json
 # Registry ref — auto-fetches if not cached.
 ruso scan --script myorg/log4shell@^0.2 --target https://lab.local -v
 ```
 
-Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.ruso` source directly (no `.bc` file). Each local script is parsed and compiled once, then bytecode is reused for every target. Registry-ref inputs skip the compile step — they are served as already-compiled bytecode from the cache and go through the same decode-and-run path as `exec`.
+Same target/timeout/TLS/report/port-cache flags as `exec`, but runs `.rsl` source directly (no `.rbc` file). Each local script is parsed and compiled once, then bytecode is reused for every target. Registry-ref inputs skip the compile step — they are served as already-compiled bytecode from the cache and go through the same decode-and-run path as `exec`.
 
 `--script` also accepts a `--registry <URL>` override for ref resolution.
 
@@ -220,8 +220,8 @@ stored.
 ## `publish`
 
 ```bash
-ruso publish ./mycheck.ruso
-ruso publish ./mycheck.ruso --visibility private
+ruso publish ./mycheck.rsl
+ruso publish ./mycheck.rsl --visibility private
 ```
 
 | Flag | Effect |
@@ -236,7 +236,7 @@ with 404.)
 
 The script's `name "…"` metadata is slugified to form the URL path
 component. `version "X.Y.Z"`, optional `tags [...]`, and optional
-`family "…"` metadata are extracted from the `.ruso` source by the
+`family "…"` metadata are extracted from the `.rsl` source by the
 backend at publish time — all immutable per version.
 
 Success output:
@@ -258,7 +258,7 @@ ruso install a/x b/y c/z@~1.4                            # multiple refs
 
 Resolves the best non-yanked version matching the range (newest wins;
 no range = newest overall) and writes it to
-`$RUSO_HOME/scripts/<ns>/<name>/<version>.bc` (default
+`$RUSO_HOME/scripts/<ns>/<name>/<version>.rbc` (default
 `~/.ruso/scripts/...`). Subsequent runs reuse the cache. A cached entry is
 reused only if it still decodes with the current runtime; one that no longer
 does (e.g. compiled by an older toolchain) is re-fetched automatically, so
@@ -467,7 +467,7 @@ The **json/csv report carries every metadata field** from the script
 `metadata { … }` block. Besides `name`, `description`, `impact`, `severity`,
 `author`, and `evidence`:
 
-| Field | Source in `.ruso` |
+| Field | Source in `.rsl` |
 |-------|-------------------|
 | `cve` | `cve ["…", "…"]` list (JSON array; CSV joined with ` \| `) |
 | `cwe` | `cwe ["…"]` list |
@@ -513,7 +513,7 @@ downstream tooling. The CSV header now includes `skipped` and
   (TCP/UDP/DNS only — Redis, NTP, …) skips the probe and keeps an `http://`
   carrier, since the scheme never reaches the wire (`--target 127.0.0.1`).
 - **HTTP** checks use `--target` as the request base URL.
-- **TCP/UDP/DNS wire** checks use `host` in the `.ruso` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
+- **TCP/UDP/DNS wire** checks use `host` in the `.rsl` script. Prefer `host "{{scan_host}}"` so the host comes from `--target`.
 - **Failure reasons are reported in full.** A failed run shows the underlying
   cause, not just a generic line — e.g. `http error: error sending request for
   url (…): client error (Connect): invalid peer certificate: UnknownIssuer`
@@ -524,16 +524,16 @@ downstream tooling. The CSV header now includes `skipped` and
 
 ```bash
 # Local development loop.
-ruso validate --script mycheck.ruso
-ruso compile --script mycheck.ruso          # → mycheck.bc
-ruso exec --bytecode mycheck.bc --target https://lab.local -v
+ruso validate --script mycheck.rsl
+ruso compile --script mycheck.rsl          # → mycheck.rbc
+ruso exec --bytecode mycheck.rbc --target https://lab.local -v
 
 # Or one step from source:
-ruso scan --script mycheck.ruso --target https://lab.local -v
+ruso scan --script mycheck.rsl --target https://lab.local -v
 
 # Publish a finished check and run someone else's:
 echo "$RUSO_PAT" | ruso login --registry https://registry.example.com
-ruso publish ./mycheck.ruso --visibility public
+ruso publish ./mycheck.rsl --visibility public
 ruso install someone/another-check@^1
 ruso scan --script someone/another-check --target https://lab.local -v
 ```

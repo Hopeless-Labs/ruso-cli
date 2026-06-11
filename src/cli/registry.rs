@@ -128,8 +128,8 @@ impl RegistryClient {
     ) -> Result<PublishResponse, RegistryError> {
         let path = format!("/v1/scripts/{namespace}/{name}");
         let part = reqwest::multipart::Part::bytes(source)
-            .file_name(format!("{name}.ruso"))
-            .mime_str("text/x-ruso")
+            .file_name(format!("{name}.rsl"))
+            .mime_str("text/x-rsl")
             .map_err(|err| RegistryError::Decode(err.to_string()))?;
         let mut form = reqwest::multipart::Form::new().part("source", part);
         if let Some(v) = visibility {

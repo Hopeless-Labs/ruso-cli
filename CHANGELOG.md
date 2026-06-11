@@ -51,15 +51,15 @@ aims to follow [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - `install --force` no longer destroys a working cache entry when the
-  re-download fails. It used to delete every cached `.bc` for the ref *before*
+  re-download fails. It used to delete every cached `.rbc` for the ref *before*
   fetching, so a registry outage or network error left you with no script at
   all. Now the download lands in a temp file and is atomically renamed over the
   existing entry only on success — a failed `--force` leaves the cache
   untouched. The write is atomic for normal installs too, so a crash mid-write
-  can't leave a half-written `.bc`.
+  can't leave a half-written `.rbc`.
 
 ### Changed
-- **`repeat` is now fully removed** from the DSL and the VM (via bumped
+- **`repeat` is now fully removed** from RSL and the VM (via bumped
   ruso-script / ruso-runtime). It is no longer recognised syntax — a script
   using it gets a plain parse error rather than the beta.3 migration hint — and
   the `Repeat` bytecode opcode is gone (opcode 18 reserved). Bytecode that does
@@ -86,12 +86,12 @@ aims to follow [Semantic Versioning](https://semver.org/).
   hint covers explicitly-schemed `https://` targets, not just bare hosts.
 - The bare-host scheme probe now uses the runtime's HTTP client, so it honors
   `--proxy` and matches the executor's TLS behaviour.
-- **DSL: `repeat N … end` was removed** (via the ruso-script bump). A script
+- **RSL: `repeat N … end` was removed** (via the ruso-script bump). A script
   using it now fails at compile with a hint to use `for` / `retry`. Previously
   compiled bytecode still runs.
 
 ### Fixed
-- A cached `<ns>/<name>/<ver>.bc` that no longer decodes with the current
+- A cached `<ns>/<name>/<ver>.rbc` that no longer decodes with the current
   runtime is re-fetched instead of failing with `corrupt bytecode` — the install
   cache self-heals.
 

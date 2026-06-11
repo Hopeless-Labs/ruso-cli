@@ -932,8 +932,8 @@ pub enum ScriptInput {
     Bytecodes(Vec<PathBuf>),
 }
 
-/// Resolve a raw `--script` argument to either `.ruso` source files or
-/// pre-compiled `.bc` bytecode files. Filesystem paths always win over
+/// Resolve a raw `--script` argument to either `.rsl` source files or
+/// pre-compiled `.rbc` bytecode files. Filesystem paths always win over
 /// registry-ref pattern matching, so a local file/dir named like a slug
 /// still works.
 pub async fn resolve_script_input(
@@ -942,13 +942,13 @@ pub async fn resolve_script_input(
 ) -> Result<ScriptInput, String> {
     let path = Path::new(raw);
     if path.exists() {
-        // Heuristic: file with `.bc` extension or directory containing
-        // `.bc` files → bytecode. Otherwise treat as source. We pick this
+        // Heuristic: file with `.rbc` extension or directory containing
+        // `.rbc` files → bytecode. Otherwise treat as source. We pick this
         // by extension first; for a directory we just try sources and
         // fall back to bytecodes on EmptyScripts.
         if path.is_file() {
             match path.extension().and_then(|e| e.to_str()) {
-                Some("bc") => {
+                Some("rbc") => {
                     return discover_bytecode(path)
                         .map(ScriptInput::Bytecodes)
                         .map_err(|e| e.to_string());
@@ -960,7 +960,7 @@ pub async fn resolve_script_input(
                 }
             }
         }
-        // Directory: prefer .ruso; if none, try .bc.
+        // Directory: prefer .rsl; if none, try .rbc.
         match discover_scripts(path) {
             Ok(files) => return Ok(ScriptInput::Sources(files)),
             Err(_) => {
@@ -981,7 +981,7 @@ pub async fn resolve_script_input(
     ))
 }
 
-/// Same for `--bytecode`: paths must already be `.bc`, refs resolve to
+/// Same for `--bytecode`: paths must already be `.rbc`, refs resolve to
 /// the cache.
 pub async fn resolve_bytecode_input(
     raw: &str,
@@ -1013,7 +1013,7 @@ async fn resolve_registry_ref(
         .map_err(|e| e.to_string())
 }
 
-/// Resolve every published script in `family` to a local `.bc` path,
+/// Resolve every published script in `family` to a local `.rbc` path,
 /// installing each into the cache on the way. Used by `scan --family`.
 /// Returns an error if the family has no scripts (so the scan doesn't
 /// silently no-op).

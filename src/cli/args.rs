@@ -33,16 +33,16 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Parse, compile, and run a `.ruso` script against targets
+    /// Parse, compile, and run a `.rsl` script against targets
     Scan(ScanArgs),
 
-    /// Validate `.ruso` syntax (no network I/O)
+    /// Validate `.rsl` syntax (no network I/O)
     Validate(ValidateArgs),
 
-    /// Compile `.ruso` to hex bytecode (writes `<name>.bc` next to each script)
+    /// Compile `.rsl` to hex bytecode (writes `<name>.rbc` next to each script)
     Compile(CompileArgs),
 
-    /// Run compiled `.bc` against targets
+    /// Run compiled `.rbc` against targets
     Exec(ExecArgs),
 
     /// Save a registry PAT or session token for later use
@@ -54,7 +54,7 @@ pub enum Command {
     /// Print the user the stored credential belongs to
     Whoami(RegistryOnlyArgs),
 
-    /// Upload a `.ruso` script to the registry
+    /// Upload a `.rsl` script to the registry
     Publish(PublishArgs),
 
     /// Download a `<namespace>/<name>[@<range>]` script into the local cache
@@ -186,7 +186,7 @@ pub struct PatRevokeArgs {
 
 #[derive(Debug, Parser)]
 pub struct ScriptArgs {
-    /// Path to a `.ruso` file, a directory of `.ruso` files, or a registry
+    /// Path to a `.rsl` file, a directory of `.rsl` files, or a registry
     /// reference like `<namespace>/<name>[@<semver-range>]`. Registry
     /// references resolve via the local install cache and the registry
     /// configured by `--registry` / `$RUSO_REGISTRY_URL`.
@@ -231,7 +231,7 @@ pub enum Visibility {
 pub struct PublishArgs {
     #[command(flatten)]
     pub registry: RegistryArgs,
-    /// Path to a `.ruso` source file.
+    /// Path to a `.rsl` source file.
     #[arg(value_name = "PATH")]
     pub path: PathBuf,
     /// Visibility for the first publish of this script. Subsequent
@@ -291,7 +291,7 @@ pub struct SearchArgs {
 
 #[derive(Debug, Parser)]
 pub struct ScanArgs {
-    /// Path to a `.ruso` file, a directory of `.ruso` files, or a registry
+    /// Path to a `.rsl` file, a directory of `.rsl` files, or a registry
     /// reference like `<namespace>/<name>[@<semver-range>]`. Mutually
     /// exclusive with `--family`; exactly one is required.
     #[arg(long, value_name = "PATH|REF")]
@@ -406,7 +406,7 @@ pub struct CompileArgs {
 
 #[derive(Debug, Parser)]
 pub struct ExecArgs {
-    /// Path to a `.bc` file, a directory of `.bc` files, or a registry
+    /// Path to a `.rbc` file, a directory of `.rbc` files, or a registry
     /// reference like `<namespace>/<name>[@<semver-range>]`.
     #[arg(long, value_name = "PATH|REF")]
     pub bytecode: String,
