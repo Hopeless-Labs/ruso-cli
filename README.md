@@ -1,105 +1,66 @@
-# Ruso-cli
+# ruso-cli
 
 [![Rust CI](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml)
 
-Command-line tool for Ruso checks (`ruso` binary). Write a vulnerability check in the Ruso Scripting Language (`.rsl`), point it at a target, and scan — all from one command. Runs `.rsl` scripts locally, *and* talks to a [`ruso-backend`](https://github.com/Hopeless-Labs/ruso-backend) registry instance for publishing, installing, and searching shared checks.
+`ruso` — the command-line vulnerability scanner of the
+[Ruso](https://github.com/Hopeless-Labs) ecosystem. Point it at a target and scan
+against a library of shareable checks written in the **Ruso Scripting Language
+(RSL)** — or write your own.
+
+📖 **Full documentation:** <https://docs.ruso.hopeless-labs.com>
+
+## Install
+
+```bash
+cargo install --git https://github.com/Hopeless-Labs/ruso-cli.git
+```
 
 ## Quick start
 
-```bash
-# One command: compile + run a check against a target.
-ruso scan --script check.rsl --target https://httpbin.org -v
-
-# Prefer it step by step?
-ruso validate --script check.rsl                              # syntax only, no network
-ruso compile  --script check.rsl                              # → check.rbc
-ruso exec     --bytecode check.rbc --target https://httpbin.org
-```
-
-That's it — no config, no setup. Grab a ready-made check from [ruso-script/examples](https://github.com/Hopeless-Labs/ruso-script/tree/main/examples) and scan in seconds.
-
-> **Development status:** This project is under active development. APIs, bytecode format, and CLI behavior may change without notice. Not recommended for production use yet.
-
-## Commands
-
-### Local
-
-| Command | Description |
-|---------|-------------|
-| `scan` | Run `.rsl` scripts against targets (compile + run in one step). `--script <path\|ref>` or `--family <name>` to run a whole category |
-| `validate` | Validate `.rsl` syntax (no network) |
-| `compile` | Compile to `<name>.rbc` (hex text, no terminal output) |
-| `exec` | Run `.rbc` bytecode against targets |
-
-### Registry (talks to `ruso-backend`)
-
-| Command | Description |
-|---------|-------------|
-| `login` | Save a PAT or session token for the active registry |
-| `logout` | Delete the stored credential |
-| `whoami` | Show the user the stored credential belongs to |
-| `publish` | Upload a `.rsl` script to the registry |
-| `install` | Download `<namespace>/<name>[@<range>]` into the local cache |
-| `search` | Search published scripts (free-text + tag/severity/cve/namespace/family filters) |
-| `info` | Show registry metadata for a script (versions, install snippet, tags) |
-| `yank` / `unyank` | Pull / restore a published version (owner-only, idempotent) |
-| `edit` | Update description / visibility of a script you own |
-| `pat list/create/revoke` | Manage PATs from the terminal — full lifecycle without the web UI |
-
-Plus: `ruso scan --script <namespace>/<name>[@<range>]` resolves a registry reference through the local cache, fetching from the registry on miss. Same for `ruso exec --bytecode <namespace>/<name>[@<range>]`. Filesystem paths always win over ref pattern matching, so a local file/directory named like a slug still works.
-
-See **[docs/CLI.md](docs/CLI.md)** for flags and examples.
-
-## Using a registry
+> Scan only systems you own or are explicitly authorized to test.
 
 ```bash
-# 1. Log in (PAT or session token from the backend's web flow).
-#    Reads token from stdin if --token is omitted.
-echo "ruso_pat_…" | ruso login
+# Scan a target against an entire family of community checks — nothing to write.
+ruso scan --family web --target https://target.example.com
 
-# 2. Publish a script. Namespace defaults to your username.
-ruso publish ./mycheck.rsl --visibility public
+# Find a specific check in the registry…
+ruso search log4j --tag rce
 
-# 3. Find shared scripts.
-ruso search "log4j" --tag rce
-
-# 4. Install + scan a registry-hosted check (cached at
-#    ~/.ruso/scripts/<ns>/<name>/<version>.rbc).
-ruso install someuser/log4shell@^0.2
+# …and run it by reference (fetched + cached on first use).
 ruso scan --script someuser/log4shell --target https://target.example.com -v
 ```
 
-### Pointing at a different registry
-
-Registry URL precedence: `--registry <url>` > `$RUSO_REGISTRY_URL` > built-in default (`https://ruso.hopeless-labs.com`, the hosted registry; use `http://127.0.0.1:8080` for a local `ruso-backend`).
-
-Credentials are stored per registry URL in `$XDG_CONFIG_HOME/ruso/credentials.json` (mode 0600 on Unix), so the same machine can be logged into a local backend *and* a hosted one at the same time.
-
-## Build
+Prefer to run your own check? Write a `.rsl` file and scan it directly:
 
 ```bash
-cargo build --release
+ruso validate --script check.rsl                              # syntax only, no network
+ruso scan     --script check.rsl --target https://target.example.com
 ```
 
-## Dependencies
+## Commands at a glance
 
-```toml
-ruso-runtime = { git = "https://github.com/Hopeless-Labs/ruso-runtime.git", branch = "main" }
-ruso-script  = { git = "https://github.com/Hopeless-Labs/ruso-script.git", branch = "main" }
+| | |
+|---|---|
+| `scan` | Compile + run a check (or `--family`) against targets |
+| `validate` / `compile` / `exec` | Check syntax · compile to `.rbc` · run compiled bytecode |
+| `search` / `info` / `install` | Discover and fetch published checks |
+| `publish` / `yank` / `edit` | Share and manage your own checks |
+| `login` / `logout` / `whoami` / `pat` | Registry authentication |
+
+Full flags, examples, and the language reference are in
+**[The Ruso Book](https://docs.ruso.hopeless-labs.com)**.
+
+## Build from source
+
+```bash
+git clone https://github.com/Hopeless-Labs/ruso-cli.git
+cd ruso-cli && cargo build --release   # binary at ./target/release/ruso
 ```
 
-## Local development
-
-To work against local checkouts of `ruso-runtime` and `ruso-script`, clone them as siblings of this repo:
-
-```
-parent/
-├── ruso-cli/
-├── ruso-runtime/
-└── ruso-script/
-```
-
-The `paths` override in [`.cargo/config.toml`](.cargo/config.toml) picks them up automatically. When the sibling directories are absent, cargo falls back to the git dependencies above.
+To work against local checkouts of [`ruso-runtime`](https://github.com/Hopeless-Labs/ruso-runtime)
+and [`ruso-script`](https://github.com/Hopeless-Labs/ruso-script), clone them as
+siblings — the `paths` override in `.cargo/config.toml` picks them up
+automatically; otherwise Cargo uses the git dependencies.
 
 ## License
 
