@@ -2,6 +2,10 @@
 
 [![Rust CI](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml)
 
+> [!NOTE]
+> **Development status:** under active development. The RSL, compiler output, and
+> grammar may change without notice. Not recommended for production use yet.
+
 `ruso` — the command-line vulnerability scanner of the
 [Ruso](https://github.com/Hopeless-Labs) ecosystem. Point it at a target and scan
 against a library of shareable checks written in the **Ruso Scripting Language
