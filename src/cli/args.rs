@@ -379,12 +379,9 @@ pub struct ScanArgs {
     #[arg(long, default_value_t = 2, value_name = "N")]
     pub retries: u32,
 
-    /// Report format: human prints findings to stdout; json/csv require --report
-    #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
-    pub output: OutputFormat,
-
-    /// Write json/csv report to this file (required when --output is json or csv)
-    #[arg(long, value_name = "PATH")]
+    /// Write a report to this file; the format is chosen by the extension
+    /// (`.json` or `.csv`). Findings always also print to the terminal.
+    #[arg(long, value_name = "FILE.json|FILE.csv")]
     pub report: Option<PathBuf>,
 
     /// Registry to resolve `<namespace>/<name>[@<range>]` references against.
@@ -461,10 +458,9 @@ pub struct ExecArgs {
     #[arg(long, default_value_t = 2, value_name = "N")]
     pub retries: u32,
 
-    #[arg(short, long, value_enum, default_value_t = OutputFormat::Human)]
-    pub output: OutputFormat,
-
-    #[arg(long, value_name = "PATH")]
+    /// Write a report to this file; the format is chosen by the extension
+    /// (`.json` or `.csv`). Findings always also print to the terminal.
+    #[arg(long, value_name = "FILE.json|FILE.csv")]
     pub report: Option<PathBuf>,
 
     /// Registry to resolve `<namespace>/<name>[@<range>]` references against.
@@ -487,14 +483,6 @@ impl DefaultScheme {
             DefaultScheme::Http => "http",
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
-pub enum OutputFormat {
-    #[default]
-    Human,
-    Json,
-    Csv,
 }
 
 /// Resolved log verbosity from global `-q` / `-v` flags (before `RUST_LOG` override).

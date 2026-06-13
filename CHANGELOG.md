@@ -21,6 +21,15 @@ aims to follow [Semantic Versioning](https://semver.org/).
   (the debug-log stream is the progress there).
 
 ### Changed
+- **`--output` is gone; `--report <file.json|file.csv>` is the whole story.**
+  The report format is now inferred from the file extension (`.json` / `.csv`
+  only). The human console output (live findings + per-target summary) always
+  prints; `--report` just *additionally* writes a machine-readable file. The
+  report data is now **grouped by target** and findings-focused: each target
+  carries its own summary counts and the findings detected on it, with the
+  source `script` recorded on each finding. Per-run rows, the top-level script
+  list, and the `errors`/`skipped` detail arrays are gone (clean/failed/skipped
+  runs are reflected in the counts).
 - **Scanning is now streaming and pipelined.** Bare-host scheme resolution is
   folded into the scan and done lazily once per target, so scanning starts
   immediately instead of waiting for a separate "resolve every target" phase —

@@ -21,7 +21,7 @@ use std::time::Instant;
 
 use clap::Parser as _;
 
-pub use args::{Cli, Command, OutputFormat, ScanArgs};
+pub use args::{Cli, Command, ScanArgs};
 
 use ruso_runtime::{MAGIC, bytes_to_hex, hex_to_bytes};
 use ruso_script::{
@@ -35,8 +35,8 @@ use self::args::{
 use self::cmd_registry::{ScriptInput, resolve_bytecode_input, resolve_script_input};
 use self::discover::bytecode_path_for_script;
 use self::report::{
-    ScanResultRecord, ScanRunReport, ScanSummary, emit_scan_report, exit_code_from_report,
-    print_finding_line, print_live_run, validate_report_options,
+    ScanResultRecord, ScanRunReport, emit_scan_report, exit_code_from_report, print_finding_line,
+    print_live_run, validate_report_options,
 };
 use self::throttle::{HostThrottle, RateLimiter};
 
@@ -171,7 +171,7 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    if let Err(err) = validate_report_options(args.output, args.report.as_deref()) {
+    if let Err(err) = validate_report_options(args.report.as_deref()) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -182,23 +182,8 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
     };
 
     let multi_target = targets.len() > 1;
-    let script_labels: Vec<String> = bytecode_files
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect();
 
-    let mut scan_report = ScanRunReport {
-        targets: targets.clone(),
-        scripts: script_labels.clone(),
-        summary: ScanSummary {
-            total_runs: 0,
-            detected: 0,
-            failed: 0,
-            skipped: 0,
-            clean: 0,
-        },
-        results: Vec::with_capacity(targets.len() * bytecode_files.len()),
-    };
+    let mut scan_report = ScanRunReport::with_capacity(targets.len() * bytecode_files.len());
 
     // Decode each .rbc file once and share the resulting bytecode across
     // targets via Arc — same optimisation as `cmd_scan`.
@@ -237,7 +222,6 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
         concurrency: args.concurrency.max(1),
         host_throttle: HostThrottle::new(args.max_per_host),
         rate_limiter: RateLimiter::per_second(args.rps),
-        output: args.output,
         verbose,
         multi_target,
         // exec runs no scheme probe; targets are used verbatim.
@@ -249,13 +233,8 @@ async fn cmd_exec(args: args::ExecArgs, verbose: bool) -> process::ExitCode {
     scan_report.finish();
     let scan_duration = scan_started.elapsed();
 
-    if let Err(err) = emit_scan_report(
-        &scan_report,
-        args.output,
-        args.report.as_deref(),
-        verbose,
-        scan_duration,
-    ) {
+    if let Err(err) = emit_scan_report(&scan_report, args.report.as_deref(), verbose, scan_duration)
+    {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -300,7 +279,7 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         }
     };
 
-    if let Err(err) = validate_report_options(args.output, args.report.as_deref()) {
+    if let Err(err) = validate_report_options(args.report.as_deref()) {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -394,27 +373,9 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         proxy: args.proxy.as_deref(),
     };
 
-    let script_labels: Vec<String> = prepared_scripts
-        .iter()
-        .map(|p| match p {
-            PreparedScript::Ready { label, .. } => label.clone(),
-            PreparedScript::Failed { label, .. } => label.clone(),
-        })
-        .collect();
     let multi_target = scan_targets.len() > 1;
 
-    let mut scan_report = ScanRunReport {
-        targets: scan_targets.clone(),
-        scripts: script_labels.clone(),
-        summary: ScanSummary {
-            total_runs: 0,
-            detected: 0,
-            failed: 0,
-            skipped: 0,
-            clean: 0,
-        },
-        results: Vec::with_capacity(scan_targets.len() * prepared_scripts.len()),
-    };
+    let mut scan_report = ScanRunReport::with_capacity(scan_targets.len() * prepared_scripts.len());
 
     let scan_started = Instant::now();
     ScanPipeline {
@@ -424,7 +385,6 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
         concurrency: args.concurrency.max(1),
         host_throttle: HostThrottle::new(args.max_per_host),
         rate_limiter: RateLimiter::per_second(args.rps),
-        output: args.output,
         verbose,
         multi_target,
         resolver: Some(resolve_opts),
@@ -435,13 +395,8 @@ async fn cmd_scan(args: ScanArgs, verbose: bool) -> process::ExitCode {
     scan_report.finish();
     let scan_duration = scan_started.elapsed();
 
-    if let Err(err) = emit_scan_report(
-        &scan_report,
-        args.output,
-        args.report.as_deref(),
-        verbose,
-        scan_duration,
-    ) {
+    if let Err(err) = emit_scan_report(&scan_report, args.report.as_deref(), verbose, scan_duration)
+    {
         ui::error(&err);
         return process::ExitCode::from(1);
     }
@@ -481,7 +436,6 @@ struct ScanPipeline<'a> {
     concurrency: usize,
     host_throttle: HostThrottle,
     rate_limiter: RateLimiter,
-    output: OutputFormat,
     verbose: bool,
     multi_target: bool,
     /// Scheme resolution for bare-host targets (`scan`). `None` uses each
@@ -507,7 +461,6 @@ impl ScanPipeline<'_> {
             concurrency,
             host_throttle,
             rate_limiter,
-            output,
             verbose,
             multi_target,
             resolver,
@@ -612,17 +565,17 @@ impl ScanPipeline<'_> {
         // printed through `suspend` so it never collides with a spinner frame.
         let (spinner, counter) = ui::Spinner::with_progress("scanning", total);
         while let Some((idx, record)) = stream.next().await {
-            if output == OutputFormat::Human {
-                spinner.suspend(|| {
-                    if verbose {
-                        print_live_run(&record, multi_target);
-                    } else if record.detected {
-                        for finding in &record.findings {
-                            print_finding_line(&record.target, finding);
-                        }
+            // Findings and verbose status rows always stream to the terminal;
+            // a `--report` file (if any) is written separately after the scan.
+            spinner.suspend(|| {
+                if verbose {
+                    print_live_run(&record, multi_target);
+                } else if record.detected {
+                    for finding in &record.findings {
+                        print_finding_line(&record.target, finding);
                     }
-                });
-            }
+                }
+            });
             completed[idx] = Some(record);
             counter.fetch_add(1, Ordering::Relaxed);
         }

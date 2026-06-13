@@ -1,4 +1,11 @@
 //! Structured scan reports: human on stdout, json/csv written to a file.
+//!
+//! The serialized report (json/csv) is **grouped by target** and
+//! findings-focused: each target carries its own summary counts and the
+//! findings detected on it (every finding tagged with the `script` that
+//! produced it). Clean/failed/skipped runs are reflected only in the counts.
+//! The internal `results` (per-run records) drive the live console output and
+//! the human summary table and are not serialized.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -8,20 +15,48 @@ use serde::Serialize;
 
 use ruso_runtime::{ExecutionResult, PortCheck};
 
-use crate::cli::args::OutputFormat;
 use crate::cli::style;
+
+/// Report file format, chosen by the `--report` file extension.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportFormat {
+    /// `.json`
+    Json,
+    /// `.csv`
+    Csv,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanRunReport {
-    pub targets: Vec<String>,
-    pub scripts: Vec<String>,
     pub summary: ScanSummary,
-    pub results: Vec<ScanResultRecord>,
+    /// Findings grouped by target (the serialized body).
+    pub targets: Vec<TargetReport>,
+    /// Per-run records — internal only (live output, human table, grouping).
+    #[serde(skip)]
+    results: Vec<ScanResultRecord>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanSummary {
     pub total_runs: usize,
+    pub detected: usize,
+    pub failed: usize,
+    pub skipped: usize,
+    pub clean: usize,
+}
+
+/// One target's section of the report: its outcome counts and the findings
+/// detected against it.
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetReport {
+    pub target: String,
+    pub summary: TargetSummary,
+    pub findings: Vec<FindingRecord>,
+}
+
+/// Per-target outcome counts (mirror [`ScanSummary`] minus `total_runs`).
+#[derive(Debug, Clone, Serialize)]
+pub struct TargetSummary {
     pub detected: usize,
     pub failed: usize,
     pub skipped: usize,
@@ -65,6 +100,8 @@ fn is_false(value: &bool) -> bool {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FindingRecord {
+    /// The script (file path or registry ref) that produced this finding.
+    pub script: String,
     pub name: String,
     pub severity: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -96,6 +133,21 @@ pub struct FindingRecord {
 }
 
 impl ScanRunReport {
+    /// An empty report sized for `capacity` per-run records.
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            summary: ScanSummary {
+                total_runs: 0,
+                detected: 0,
+                failed: 0,
+                skipped: 0,
+                clean: 0,
+            },
+            targets: Vec::new(),
+            results: Vec::with_capacity(capacity),
+        }
+    }
+
     /// Append an already-built [`ScanResultRecord`] and update the summary
     /// counters. The concurrent scan pipeline uses this to feed back records
     /// it built while running futures in parallel, where the original
@@ -123,8 +175,46 @@ impl ScanRunReport {
         self.results.push(record);
     }
 
+    /// Finalise: set `total_runs` and build the per-target sections from the
+    /// collected per-run records, preserving first-seen target order. Each
+    /// target's findings are the findings of its detected runs (already tagged
+    /// with their script); clean/failed/skipped runs contribute only counts.
     pub fn finish(&mut self) {
         self.summary.total_runs = self.results.len();
+
+        let mut order: Vec<String> = Vec::new();
+        let mut index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        let mut targets: Vec<TargetReport> = Vec::new();
+
+        for record in &self.results {
+            let idx = *index.entry(record.target.clone()).or_insert_with(|| {
+                order.push(record.target.clone());
+                targets.push(TargetReport {
+                    target: record.target.clone(),
+                    summary: TargetSummary {
+                        detected: 0,
+                        failed: 0,
+                        skipped: 0,
+                        clean: 0,
+                    },
+                    findings: Vec::new(),
+                });
+                targets.len() - 1
+            });
+            let t = &mut targets[idx];
+            if record.skipped {
+                t.summary.skipped += 1;
+            } else if record.detected {
+                t.summary.detected += 1;
+            } else if !record.success {
+                t.summary.failed += 1;
+            } else {
+                t.summary.clean += 1;
+            }
+            t.findings.extend(record.findings.iter().cloned());
+        }
+
+        self.targets = targets;
     }
 }
 
@@ -141,6 +231,7 @@ impl ScanResultRecord {
             .findings
             .iter()
             .map(|f| FindingRecord {
+                script: script.clone(),
                 name: f.name.clone(),
                 severity: f.severity.as_str().to_string(),
                 description: f.description.clone(),
@@ -207,70 +298,51 @@ fn port_checks_to_records(checks: &[PortCheck]) -> Vec<PortCheckRecord> {
         .collect()
 }
 
-/// Validate `--report` / `--output` combination before scanning.
-pub fn validate_report_options(
-    format: OutputFormat,
-    report_path: Option<&Path>,
-) -> Result<(), String> {
-    match format {
-        OutputFormat::Human => Ok(()),
-        OutputFormat::Json | OutputFormat::Csv => {
-            let Some(path) = report_path else {
-                return Err(format!(
-                    "--output {} requires --report <path> (report is written to a file, not stdout)",
-                    format_label(format)
-                ));
-            };
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                let expected = match format {
-                    OutputFormat::Json => "json",
-                    OutputFormat::Csv => "csv",
-                    OutputFormat::Human => unreachable!(),
-                };
-                if ext.eq_ignore_ascii_case(expected) {
-                    return Ok(());
-                }
-                return Err(format!(
-                    "report file extension .{ext} does not match --output {} (expected .{expected})",
-                    format_label(format)
-                ));
-            }
-            Ok(())
-        }
+/// The report format implied by a `--report` path's extension, or an error
+/// if the extension isn't `.json` / `.csv`.
+pub fn report_format_from_path(path: &Path) -> Result<ReportFormat, String> {
+    match path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("json") => Ok(ReportFormat::Json),
+        Some("csv") => Ok(ReportFormat::Csv),
+        _ => Err(format!(
+            "unsupported --report file `{}`: use a .json or .csv extension",
+            path.display()
+        )),
     }
 }
 
-fn format_label(format: OutputFormat) -> &'static str {
-    match format {
-        OutputFormat::Human => "human",
-        OutputFormat::Json => "json",
-        OutputFormat::Csv => "csv",
+/// Validate the `--report` path (if any) before scanning, so a bad extension
+/// fails fast rather than after a full run.
+pub fn validate_report_options(report_path: Option<&Path>) -> Result<(), String> {
+    match report_path {
+        Some(path) => report_format_from_path(path).map(|_| ()),
+        None => Ok(()),
     }
 }
 
-/// Human summary/findings on stdout; json/csv written to `--report` path.
+/// Human summary/findings always print to stdout; when `--report <path>` is
+/// given, a json/csv file is additionally written (format from the extension).
 pub fn emit_scan_report(
     report: &ScanRunReport,
-    format: OutputFormat,
     report_path: Option<&Path>,
     verbose: bool,
     duration: Duration,
 ) -> Result<(), String> {
-    match format {
-        OutputFormat::Human => print_human(report, verbose, duration),
-        OutputFormat::Json => {
-            let path = report_path.ok_or_else(|| "--report path is required".to_string())?;
-            write_json_file(report, path)?;
-            eprintln!("report saved: {}", path.display());
-            Ok(())
+    print_human(report, verbose, duration)?;
+
+    if let Some(path) = report_path {
+        match report_format_from_path(path)? {
+            ReportFormat::Json => write_json_file(report, path)?,
+            ReportFormat::Csv => write_csv_file(report, path)?,
         }
-        OutputFormat::Csv => {
-            let path = report_path.ok_or_else(|| "--report path is required".to_string())?;
-            write_csv_file(report, path)?;
-            eprintln!("report saved: {}", path.display());
-            Ok(())
-        }
+        eprintln!("report saved: {}", path.display());
     }
+    Ok(())
 }
 
 fn write_json_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
@@ -298,11 +370,6 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
         .write_record([
             "target",
             "script",
-            "success",
-            "detected",
-            "skipped",
-            "skip_reason",
-            "check",
             "severity",
             "finding_name",
             "description",
@@ -318,17 +385,13 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
             "family",
             "tags",
             "evidence",
-            "error",
         ])
         .map_err(|err| err.to_string())?;
 
-    for row in &report.results {
-        if row.findings.is_empty() {
-            write_csv_row(&mut writer, row, None)?;
-        } else {
-            for finding in &row.findings {
-                write_csv_row(&mut writer, row, Some(finding))?;
-            }
+    // One row per finding, grouped by target (targets are in first-seen order).
+    for target in &report.targets {
+        for finding in &target.findings {
+            write_csv_row(&mut writer, &target.target, finding)?;
         }
     }
 
@@ -340,39 +403,28 @@ fn write_csv_file(report: &ScanRunReport, path: &Path) -> Result<(), String> {
 
 fn write_csv_row(
     writer: &mut csv::Writer<File>,
-    row: &ScanResultRecord,
-    finding: Option<&FindingRecord>,
+    target: &str,
+    finding: &FindingRecord,
 ) -> Result<(), String> {
-    let evidence = finding.map(|f| f.evidence.join(" | ")).unwrap_or_default();
-    let cve = finding.map(|f| f.cve.join(" | ")).unwrap_or_default();
-    let cwe = finding.map(|f| f.cwe.join(" | ")).unwrap_or_default();
-    let references = finding
-        .map(|f| f.references.join(" | "))
-        .unwrap_or_default();
-    let cvss = finding.map(|f| f.cvss.join(" | ")).unwrap_or_default();
-    let cvss_score = finding
-        .map(|f| f.cvss_score.join(" | "))
-        .unwrap_or_default();
-    let mitigation = finding
-        .and_then(|f| f.mitigation.clone())
-        .unwrap_or_default();
-    let version = finding.and_then(|f| f.version.clone()).unwrap_or_default();
-    let family = finding.and_then(|f| f.family.clone()).unwrap_or_default();
-    let tags = finding.map(|f| f.tags.join(" | ")).unwrap_or_default();
+    let evidence = finding.evidence.join(" | ");
+    let cve = finding.cve.join(" | ");
+    let cwe = finding.cwe.join(" | ");
+    let references = finding.references.join(" | ");
+    let cvss = finding.cvss.join(" | ");
+    let cvss_score = finding.cvss_score.join(" | ");
+    let mitigation = finding.mitigation.clone().unwrap_or_default();
+    let version = finding.version.clone().unwrap_or_default();
+    let family = finding.family.clone().unwrap_or_default();
+    let tags = finding.tags.join(" | ");
     writer
         .write_record([
-            row.target.as_str(),
-            row.script.as_str(),
-            if row.success { "true" } else { "false" },
-            if row.detected { "true" } else { "false" },
-            if row.skipped { "true" } else { "false" },
-            row.skip_reason.as_deref().unwrap_or(""),
-            row.check.as_deref().unwrap_or(""),
-            finding.map(|f| f.severity.as_str()).unwrap_or(""),
-            finding.map(|f| f.name.as_str()).unwrap_or(""),
-            finding.and_then(|f| f.description.as_deref()).unwrap_or(""),
-            finding.and_then(|f| f.impact.as_deref()).unwrap_or(""),
-            finding.and_then(|f| f.author.as_deref()).unwrap_or(""),
+            target,
+            finding.script.as_str(),
+            finding.severity.as_str(),
+            finding.name.as_str(),
+            finding.description.as_deref().unwrap_or(""),
+            finding.impact.as_deref().unwrap_or(""),
+            finding.author.as_deref().unwrap_or(""),
             cve.as_str(),
             cwe.as_str(),
             references.as_str(),
@@ -383,7 +435,6 @@ fn write_csv_row(
             family.as_str(),
             tags.as_str(),
             evidence.as_str(),
-            row.error.as_deref().unwrap_or(""),
         ])
         .map_err(|err| err.to_string())
 }
@@ -648,18 +699,7 @@ mod tests {
     use super::*;
 
     fn empty_report() -> ScanRunReport {
-        ScanRunReport {
-            targets: vec!["t".into()],
-            scripts: vec!["s".into()],
-            summary: ScanSummary {
-                total_runs: 0,
-                detected: 0,
-                failed: 0,
-                skipped: 0,
-                clean: 0,
-            },
-            results: Vec::new(),
-        }
+        ScanRunReport::with_capacity(0)
     }
 
     fn record(target: &str, script: &str) -> ScanResultRecord {
@@ -677,12 +717,67 @@ mod tests {
         }
     }
 
+    fn finding(script: &str, name: &str) -> FindingRecord {
+        FindingRecord {
+            script: script.into(),
+            name: name.into(),
+            severity: "high".into(),
+            description: None,
+            impact: None,
+            author: None,
+            cve: Vec::new(),
+            cwe: Vec::new(),
+            references: Vec::new(),
+            cvss: Vec::new(),
+            cvss_score: Vec::new(),
+            mitigation: None,
+            version: None,
+            family: None,
+            tags: Vec::new(),
+            evidence: Vec::new(),
+        }
+    }
+
     #[test]
     fn classifies_clean_run() {
         let mut report = empty_report();
         report.push_record(record("t", "s"));
         assert_eq!(report.summary.clean, 1);
         assert_eq!(report.summary.failed, 0);
+    }
+
+    #[test]
+    fn finish_groups_findings_by_target_with_script_on_finding() {
+        let mut report = empty_report();
+        // Target A: one detected run (carrying a finding) + one clean run.
+        let mut a1 = record("https://a", "s1.rsl");
+        a1.detected = true;
+        a1.findings = vec![finding("s1.rsl", "Finding A")];
+        report.push_record(a1);
+        report.push_record(record("https://a", "s2.rsl")); // clean
+        // Target B: one failed run, no finding.
+        let mut b1 = record("https://b", "s3.rsl");
+        b1.success = false;
+        report.push_record(b1);
+
+        report.finish();
+
+        assert_eq!(report.summary.total_runs, 3);
+        assert_eq!(report.targets.len(), 2);
+
+        // First-seen order preserved: A before B.
+        let a = &report.targets[0];
+        assert_eq!(a.target, "https://a");
+        assert_eq!(a.summary.detected, 1);
+        assert_eq!(a.summary.clean, 1);
+        assert_eq!(a.findings.len(), 1);
+        // The script that produced the finding rides on the finding itself.
+        assert_eq!(a.findings[0].script, "s1.rsl");
+
+        let b = &report.targets[1];
+        assert_eq!(b.target, "https://b");
+        assert_eq!(b.summary.failed, 1);
+        assert!(b.findings.is_empty());
     }
 
     #[test]
