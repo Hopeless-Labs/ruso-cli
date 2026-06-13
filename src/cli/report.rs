@@ -502,7 +502,7 @@ fn format_duration(d: Duration) -> String {
 /// ┌─────────────┬──────────┬────────┬─────────┬───────┐
 /// │ target      │ detected │ failed │ skipped │ clean │
 /// ├─────────────┼──────────┼────────┼─────────┼───────┤
-/// │ protergo.id │        0 │     48 │       0 │     0 │
+/// │ target.test │        0 │     48 │       0 │     0 │
 /// │ example.com │        2 │      1 │       0 │    45 │
 /// └─────────────┴──────────┴────────┴─────────┴───────┘
 /// scan duration 1.2s · 96 runs across 2 targets
