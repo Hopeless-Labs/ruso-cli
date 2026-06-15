@@ -1026,28 +1026,46 @@ pub async fn resolve_family_to_bytecodes(
     let client = RegistryClient::new(base_url, token).map_err(|e: RegistryError| e.to_string())?;
     let store = InstallStore::default_for_user().map_err(|e| e.to_string())?;
 
-    // One page of up to 100 — families aren't expected to exceed that
-    // in the MVP. Paginate later if a family grows past it.
-    let params = SearchParams {
-        family: Some(family.to_string()),
-        per_page: Some(100),
-        ..Default::default()
-    };
-    let resp = ui::with_spinner("fetching family", client.search(&params))
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.results.is_empty() {
+    // Page through the whole family (the registry caps a page at 100), so a
+    // family larger than one page isn't silently truncated. Stop on an empty
+    // or short page, or once every result the registry reported is collected.
+    let results = ui::with_spinner("fetching family", async {
+        let mut all = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let params = SearchParams {
+                family: Some(family.to_string()),
+                per_page: Some(100),
+                page: Some(page),
+                ..Default::default()
+            };
+            let resp = client
+                .search(&params)
+                .await
+                .map_err(|e: RegistryError| e.to_string())?;
+            let got = resp.results.len();
+            let per_page = resp.per_page.max(1) as usize;
+            let total = resp.total;
+            all.extend(resp.results);
+            if got == 0 || got < per_page || (total >= 0 && all.len() as i64 >= total) {
+                break;
+            }
+            page += 1;
+        }
+        Ok::<_, String>(all)
+    })
+    .await?;
+    if results.is_empty() {
         return Err(format!("no scripts found in family `{family}`"));
     }
 
     // Download each family member, with a progress spinner over the set. Skip
     // messages are deferred and printed after the spinner stops so a live
     // spinner line never garbles them.
-    let (spinner, counter) =
-        ui::Spinner::with_progress("fetching family scripts", resp.results.len());
-    let mut paths = Vec::with_capacity(resp.results.len());
+    let (spinner, counter) = ui::Spinner::with_progress("fetching family scripts", results.len());
+    let mut paths = Vec::with_capacity(results.len());
     let mut skipped = Vec::new();
-    for hit in &resp.results {
+    for hit in &results {
         let r#ref = RegistryRef {
             namespace: hit.namespace.clone(),
             name: hit.name.clone(),

@@ -76,6 +76,12 @@ aims to follow [Semantic Versioning](https://semver.org/).
   bump, and every published script keeps working. Use `for` to iterate or
   `retry` to re-send.
 
+### Fixed
+- **`scan --family` now paginates** — it used to fetch only the first page
+  (100 scripts) of a family and silently skip the rest, so a family larger than
+  100 (e.g. `web`, now 109) never ran its tail. It now pages through the whole
+  family until every published script is resolved. (#2)
+
 ## [0.1.0-beta.3] - 2026-06-05
 
 ### Added
