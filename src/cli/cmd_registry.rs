@@ -9,8 +9,9 @@ use std::process::ExitCode;
 use ruso_script::{Program, Stmt, parse};
 
 use crate::cli::args::{
-    EditArgs, InfoArgs, InstallArgs, LoginArgs, PatCreateArgs, PatListArgs, PatRevokeArgs,
-    PublishArgs, RegistryArgs, RegistryOnlyArgs, SearchArgs, UnyankArgs, Visibility, YankArgs,
+    AdminDeleteArgs, EditArgs, InfoArgs, InstallArgs, LoginArgs, PatCreateArgs, PatListArgs,
+    PatRevokeArgs, PublishArgs, RegistryArgs, RegistryOnlyArgs, SearchArgs, UnyankArgs, Visibility,
+    YankArgs,
 };
 use crate::cli::credentials::{self, Credentials};
 use crate::cli::discover::{discover_bytecode, discover_scripts};
@@ -657,6 +658,47 @@ pub async fn cmd_unyank(args: UnyankArgs) -> ExitCode {
     match ui::with_spinner("unyanking", client.unyank_version(&ns, &name, &version)).await {
         Ok(()) => {
             println!("unyanked {}/{}@{}", ns, name, version);
+            ExitCode::SUCCESS
+        }
+        Err(err) => {
+            ui::error(&err.to_string());
+            ExitCode::from(1)
+        }
+    }
+}
+
+pub async fn cmd_admin_delete(args: AdminDeleteArgs) -> ExitCode {
+    // `<ns>/<name>` → delete the whole script; `<ns>/<name>@<version>` →
+    // delete that one version.
+    let (ns, name, version) = match parse_ns_name_optional_range(&args.r#ref) {
+        Ok(parts) => parts,
+        Err(msg) => {
+            ui::error(&msg);
+            return ExitCode::from(1);
+        }
+    };
+    let target = match &version {
+        Some(v) => format!("{ns}/{name}@{v}"),
+        None => format!("{ns}/{name} (and ALL its versions)"),
+    };
+    if !args.yes {
+        ui::error(&format!(
+            "refusing to hard-delete {target} without --yes (this is irreversible)"
+        ));
+        return ExitCode::from(1);
+    }
+    let Some(client) = require_authed_client(&args.registry).await else {
+        return ExitCode::from(1);
+    };
+    let result = match &version {
+        Some(v) => {
+            ui::with_spinner("deleting", client.admin_delete_version(&ns, &name, v)).await
+        }
+        None => ui::with_spinner("deleting", client.admin_delete_script(&ns, &name)).await,
+    };
+    match result {
+        Ok(()) => {
+            println!("deleted {target}");
             ExitCode::SUCCESS
         }
         Err(err) => {

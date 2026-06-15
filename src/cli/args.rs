@@ -77,6 +77,35 @@ pub enum Command {
 
     /// Manage personal access tokens (list / create / revoke)
     Pat(PatArgs),
+
+    /// Operator-only registry actions (requires an admin account)
+    Admin(AdminArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct AdminArgs {
+    #[command(subcommand)]
+    pub action: AdminCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AdminCommand {
+    /// Hard-delete a published version or an entire script. Irreversible —
+    /// the data is removed, not yanked. Frees the version/slug for re-publish.
+    Delete(AdminDeleteArgs),
+}
+
+#[derive(Debug, Parser)]
+pub struct AdminDeleteArgs {
+    #[command(flatten)]
+    pub registry: RegistryArgs,
+    /// `<namespace>/<name>` to delete the whole script, or
+    /// `<namespace>/<name>@<version>` to delete one exact version.
+    #[arg(value_name = "REF[@VERSION]")]
+    pub r#ref: String,
+    /// Required acknowledgement — this permanently deletes registry data.
+    #[arg(long)]
+    pub yes: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -543,7 +572,7 @@ pub fn validate_source(source: &str, path_display: &str) -> Result<(), ExitCode>
     compile_program(&program).map_err(|err| {
         let message = match err {
             CompileError::MissingFindingTitle => {
-                "missing `name` or `report` metadata (required when using match/evidence)"
+                "missing `name` metadata (required when using match/evidence)"
             }
             CompileError::DuplicateMitigation => {
                 "`mitigation` may appear at most once (single free-text field)"

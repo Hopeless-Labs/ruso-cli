@@ -261,6 +261,31 @@ impl RegistryClient {
         Self::no_content_response(resp, &path).await
     }
 
+    /// Admin-only hard delete of a single published version (frees the
+    /// version number for re-publish). Irreversible.
+    pub async fn admin_delete_version(
+        &self,
+        namespace: &str,
+        name: &str,
+        version: &str,
+    ) -> Result<(), RegistryError> {
+        let path = format!("/v1/admin/scripts/{namespace}/{name}/versions/{version}");
+        let resp = self.request(reqwest::Method::DELETE, &path).send().await?;
+        Self::no_content_response(resp, &path).await
+    }
+
+    /// Admin-only hard delete of an entire script and all its versions
+    /// (frees the slug for a fresh publish). Irreversible.
+    pub async fn admin_delete_script(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<(), RegistryError> {
+        let path = format!("/v1/admin/scripts/{namespace}/{name}");
+        let resp = self.request(reqwest::Method::DELETE, &path).send().await?;
+        Self::no_content_response(resp, &path).await
+    }
+
     /// 204-or-error helper for the yank-family endpoints. Mirrors
     /// `json_response`'s error path but doesn't try to parse a body.
     async fn no_content_response(resp: reqwest::Response, path: &str) -> Result<(), RegistryError> {
