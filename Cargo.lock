@@ -1085,7 +1085,7 @@ dependencies = [
 
 [[package]]
 name = "ruso-cli"
-version = "0.1.0-beta.4"
+version = "1.0.0"
 dependencies = [
  "clap",
  "csv",
