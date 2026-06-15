@@ -691,9 +691,7 @@ pub async fn cmd_admin_delete(args: AdminDeleteArgs) -> ExitCode {
         return ExitCode::from(1);
     };
     let result = match &version {
-        Some(v) => {
-            ui::with_spinner("deleting", client.admin_delete_version(&ns, &name, v)).await
-        }
+        Some(v) => ui::with_spinner("deleting", client.admin_delete_version(&ns, &name, v)).await,
         None => ui::with_spinner("deleting", client.admin_delete_script(&ns, &name)).await,
     };
     match result {
