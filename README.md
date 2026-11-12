@@ -1,5 +1,16 @@
 # ruso-cli
 
+> [!IMPORTANT]
+> **This repository has moved.** `ruso-cli` is now a crate in the Ruso workspace at
+> **[Hopeless-Labs/ruso](https://github.com/Hopeless-Labs/ruso)**, together with
+> the other two crates it was always built against. This repository is archived
+> and read-only; it is kept only as a record of the history up to the move.
+>
+> - Source: [`crates/ruso-cli/`](https://github.com/Hopeless-Labs/ruso/tree/main/crates/ruso-cli)
+> - Install the CLI: `cargo install --git https://github.com/Hopeless-Labs/ruso.git ruso-cli`
+> - Depend on a library: `{ git = "https://github.com/Hopeless-Labs/ruso.git", branch = "main" }`
+> - Documentation: <https://docs.ruso.hopeless-labs.com>
+
 [![Rust CI](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml/badge.svg?branch=main)](https://github.com/Hopeless-Labs/ruso-cli/actions/workflows/rust.yml)
 
 > [!NOTE]
@@ -16,7 +27,7 @@ against a library of shareable checks written in the **Ruso Scripting Language
 ## Install
 
 ```bash
-cargo install --git https://github.com/Hopeless-Labs/ruso-cli.git
+cargo install --git https://github.com/Hopeless-Labs/ruso.git ruso-cli
 ```
 
 ## Quick start
@@ -57,14 +68,12 @@ Full flags, examples, and the language reference are in
 ## Build from source
 
 ```bash
-git clone https://github.com/Hopeless-Labs/ruso-cli.git
-cd ruso-cli && cargo build --release   # binary at ./target/release/ruso
+git clone https://github.com/Hopeless-Labs/ruso.git
+cd ruso && cargo build --release   # binary at ./target/release/ruso
 ```
 
-To work against local checkouts of [`ruso-runtime`](https://github.com/Hopeless-Labs/ruso-runtime)
-and [`ruso-script`](https://github.com/Hopeless-Labs/ruso-script), clone them as
-siblings — the `paths` override in `.cargo/config.toml` picks them up
-automatically; otherwise Cargo uses the git dependencies.
+`ruso-runtime` and `ruso-script` are in that same checkout under `crates/`, so a
+change to either is picked up by the CLI with nothing to configure.
 
 ## License
 
